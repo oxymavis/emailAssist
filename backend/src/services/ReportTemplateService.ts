@@ -1,0 +1,836 @@
+/**
+ * 报告模板服务
+ * 提供预定义模板和自定义模板管理功能
+ */
+
+import { Pool } from 'pg';
+import RedisManager from '@/config/redis';
+import { 
+  ReportTemplate, 
+  CreateReportTemplateData, 
+  UpdateReportTemplateData,
+  ReportTemplateQuery,
+  ReportType,
+  LayoutConfig,
+  ChartConfig 
+} from '../models/Report';
+import logger from '../utils/logger';
+import { v4 as uuidv4 } from 'uuid';
+
+export class ReportTemplateService {
+  private db: Pool;
+  private redis: typeof RedisManager;
+  private cachePrefix = 'report_template:';
+  private systemTemplates: Map<string, ReportTemplate> = new Map();
+
+  constructor(db: Pool, redis: typeof RedisManager) {
+    this.db = db;
+    this.redis = redis;
+    this.initializeSystemTemplates();
+  }
+
+  /**
+   * 初始化系统预定义模板
+   */
+  private initializeSystemTemplates(): void {
+    // 日报模板
+    this.systemTemplates.set('daily_report', {
+      id: 'daily_report',
+      name: '日报模板',
+      description: '每日邮件处理情况统计报告',
+      category: 'daily',
+      report_type: ReportType.DAILY,
+      default_parameters: {
+        include_charts: true,
+        include_attachments: true,
+        metrics: ['total_emails', 'unread_emails', 'high_priority', 'response_time'],
+        group_by: ['hour', 'sender', 'priority']
+      },
+      layout_config: this.getDefaultLayoutConfig('daily'),
+      chart_configs: this.getDefaultChartConfigs('daily'),
+      is_system: true,
+      usage_count: 0,
+      created_at: new Date(),
+      updated_at: new Date()
+    });
+
+    // 周报模板
+    this.systemTemplates.set('weekly_report', {
+      id: 'weekly_report',
+      name: '周报模板',
+      description: '每周邮件处理统计和AI分析报告',
+      category: 'weekly',
+      report_type: ReportType.WEEKLY,
+      default_parameters: {
+        include_charts: true,
+        include_attachments: true,
+        include_raw_data: false,
+        metrics: ['total_emails', 'avg_response_time', 'sentiment_analysis', 'top_senders'],
+        group_by: ['day', 'category', 'priority', 'sentiment']
+      },
+      layout_config: this.getDefaultLayoutConfig('weekly'),
+      chart_configs: this.getDefaultChartConfigs('weekly'),
+      is_system: true,
+      usage_count: 0,
+      created_at: new Date(),
+      updated_at: new Date()
+    });
+
+    // 月报模板
+    this.systemTemplates.set('monthly_report', {
+      id: 'monthly_report',
+      name: '月报模板',
+      description: '月度邮件处理综合分析报告',
+      category: 'monthly',
+      report_type: ReportType.MONTHLY,
+      default_parameters: {
+        include_charts: true,
+        include_attachments: true,
+        include_raw_data: true,
+        metrics: ['total_emails', 'trends', 'top_topics', 'efficiency_metrics'],
+        group_by: ['week', 'category', 'sender_domain', 'priority']
+      },
+      layout_config: this.getDefaultLayoutConfig('monthly'),
+      chart_configs: this.getDefaultChartConfigs('monthly'),
+      is_system: true,
+      usage_count: 0,
+      created_at: new Date(),
+      updated_at: new Date()
+    });
+
+    // 性能分析模板
+    this.systemTemplates.set('performance_report', {
+      id: 'performance_report',
+      name: '性能分析模板',
+      description: '邮件处理性能和规则执行效率分析',
+      category: 'performance',
+      report_type: ReportType.PERFORMANCE,
+      default_parameters: {
+        include_charts: true,
+        include_attachments: false,
+        metrics: ['rule_performance', 'processing_time', 'success_rates', 'error_analysis'],
+        group_by: ['rule', 'time_period', 'error_type']
+      },
+      layout_config: this.getDefaultLayoutConfig('performance'),
+      chart_configs: this.getDefaultChartConfigs('performance'),
+      is_system: true,
+      usage_count: 0,
+      created_at: new Date(),
+      updated_at: new Date()
+    });
+
+    // 综合分析模板
+    this.systemTemplates.set('summary_report', {
+      id: 'summary_report',
+      name: '综合分析模板',
+      description: '全面的邮件处理和AI分析综合报告',
+      category: 'summary',
+      report_type: ReportType.SUMMARY,
+      default_parameters: {
+        include_charts: true,
+        include_attachments: true,
+        include_raw_data: true,
+        metrics: ['overview', 'ai_insights', 'trends', 'recommendations'],
+        group_by: ['all']
+      },
+      layout_config: this.getDefaultLayoutConfig('summary'),
+      chart_configs: this.getDefaultChartConfigs('summary'),
+      is_system: true,
+      usage_count: 0,
+      created_at: new Date(),
+      updated_at: new Date()
+    });
+
+    logger.info(`初始化了 ${this.systemTemplates.size} 个系统模板`);
+  }
+
+  /**
+   * 获取默认布局配置
+   */
+  private getDefaultLayoutConfig(type: string): LayoutConfig {
+    const baseConfig: LayoutConfig = {
+      page_size: 'A4',
+      orientation: 'portrait',
+      margins: { top: 50, right: 50, bottom: 50, left: 50 },
+      header: {
+        enabled: true,
+        template: '{{title}} - {{date}}'
+      },
+      footer: {
+        enabled: true,
+        template: 'Page {{page}} of {{total}} - Generated by Email Assist'
+      },
+      sections: []
+    };
+
+    switch (type) {
+      case 'daily':
+        baseConfig.sections = [
+          { id: 'summary', name: '今日概览', type: 'summary', order: 1, config: {} },
+          { id: 'hourly_chart', name: '时间分布', type: 'chart', order: 2, config: { chart_id: 'hourly_distribution' } },
+          { id: 'priority_stats', name: '优先级统计', type: 'table', order: 3, config: {} },
+          { id: 'top_senders', name: '主要发件人', type: 'table', order: 4, config: {} }
+        ];
+        break;
+
+      case 'weekly':
+        baseConfig.sections = [
+          { id: 'weekly_summary', name: '本周概览', type: 'summary', order: 1, config: {} },
+          { id: 'daily_trend', name: '每日趋势', type: 'chart', order: 2, config: { chart_id: 'daily_trend' } },
+          { id: 'sentiment_analysis', name: '情感分析', type: 'chart', order: 3, config: { chart_id: 'sentiment_pie' } },
+          { id: 'category_breakdown', name: '类别分布', type: 'table', order: 4, config: {} },
+          { id: 'ai_insights', name: 'AI洞察', type: 'text', order: 5, config: {} }
+        ];
+        break;
+
+      case 'monthly':
+        baseConfig.orientation = 'landscape';
+        baseConfig.sections = [
+          { id: 'executive_summary', name: '执行摘要', type: 'summary', order: 1, config: {} },
+          { id: 'trend_analysis', name: '趋势分析', type: 'chart', order: 2, config: { chart_id: 'monthly_trend' } },
+          { id: 'performance_metrics', name: '性能指标', type: 'table', order: 3, config: {} },
+          { id: 'top_topics', name: '热门话题', type: 'chart', order: 4, config: { chart_id: 'topic_cloud' } },
+          { id: 'detailed_stats', name: '详细统计', type: 'table', order: 5, config: {} },
+          { id: 'recommendations', name: '优化建议', type: 'text', order: 6, config: {} }
+        ];
+        break;
+
+      case 'performance':
+        baseConfig.sections = [
+          { id: 'performance_overview', name: '性能概览', type: 'summary', order: 1, config: {} },
+          { id: 'rule_performance', name: '规则性能', type: 'chart', order: 2, config: { chart_id: 'rule_performance' } },
+          { id: 'processing_time', name: '处理时间', type: 'chart', order: 3, config: { chart_id: 'processing_time' } },
+          { id: 'error_analysis', name: '错误分析', type: 'table', order: 4, config: {} },
+          { id: 'optimization_tips', name: '优化建议', type: 'text', order: 5, config: {} }
+        ];
+        break;
+
+      case 'summary':
+        baseConfig.orientation = 'landscape';
+        baseConfig.sections = [
+          { id: 'overview', name: '全面概览', type: 'summary', order: 1, config: {} },
+          { id: 'key_metrics', name: '关键指标', type: 'chart', order: 2, config: { chart_id: 'key_metrics' } },
+          { id: 'ai_insights_summary', name: 'AI分析洞察', type: 'text', order: 3, config: {} },
+          { id: 'performance_summary', name: '性能汇总', type: 'table', order: 4, config: {} },
+          { id: 'recommendations_summary', name: '改进建议', type: 'text', order: 5, config: {} }
+        ];
+        break;
+    }
+
+    return baseConfig;
+  }
+
+  /**
+   * 获取默认图表配置
+   */
+  private getDefaultChartConfigs(type: string): ChartConfig[] {
+    const configs: ChartConfig[] = [];
+
+    switch (type) {
+      case 'daily':
+        configs.push(
+          {
+            id: 'hourly_distribution',
+            name: '每小时邮件分布',
+            type: 'bar',
+            data_query: 'SELECT hour, COUNT(*) as count FROM messages WHERE DATE(received_date) = CURRENT_DATE GROUP BY EXTRACT(HOUR FROM received_date)',
+            options: {
+              title: '今日每小时邮件分布',
+              xAxis: { title: '时间(小时)' },
+              yAxis: { title: '邮件数量' }
+            },
+            position: { section_id: 'hourly_chart', order: 1 }
+          }
+        );
+        break;
+
+      case 'weekly':
+        configs.push(
+          {
+            id: 'daily_trend',
+            name: '每日邮件趋势',
+            type: 'line',
+            data_query: 'SELECT DATE(received_date) as date, COUNT(*) as count FROM messages WHERE received_date >= CURRENT_DATE - INTERVAL \'7 days\' GROUP BY DATE(received_date)',
+            options: {
+              title: '本周每日邮件趋势',
+              xAxis: { title: '日期' },
+              yAxis: { title: '邮件数量' }
+            },
+            position: { section_id: 'daily_trend', order: 1 }
+          },
+          {
+            id: 'sentiment_pie',
+            name: '情感分布',
+            type: 'pie',
+            data_query: 'SELECT CASE WHEN sentiment_score > 0.1 THEN \'正面\' WHEN sentiment_score < -0.1 THEN \'负面\' ELSE \'中性\' END as sentiment, COUNT(*) as count FROM ai_analysis a JOIN messages m ON a.message_id = m.id WHERE m.received_date >= CURRENT_DATE - INTERVAL \'7 days\' GROUP BY sentiment',
+            options: {
+              title: '本周情感分布'
+            },
+            position: { section_id: 'sentiment_analysis', order: 1 }
+          }
+        );
+        break;
+
+      case 'monthly':
+        configs.push(
+          {
+            id: 'monthly_trend',
+            name: '月度趋势分析',
+            type: 'area',
+            data_query: 'SELECT DATE_TRUNC(\'week\', received_date) as week, COUNT(*) as count FROM messages WHERE received_date >= CURRENT_DATE - INTERVAL \'30 days\' GROUP BY week ORDER BY week',
+            options: {
+              title: '月度邮件趋势',
+              xAxis: { title: '周' },
+              yAxis: { title: '邮件数量' }
+            },
+            position: { section_id: 'trend_analysis', order: 1 }
+          }
+        );
+        break;
+
+      case 'performance':
+        configs.push(
+          {
+            id: 'rule_performance',
+            name: '规则执行性能',
+            type: 'bar',
+            data_query: 'SELECT r.name, COUNT(rel.id) as executions, AVG(rel.execution_time_ms) as avg_time FROM filter_rules r LEFT JOIN rule_execution_logs rel ON r.id = rel.rule_id GROUP BY r.id, r.name ORDER BY executions DESC',
+            options: {
+              title: '规则执行次数和平均时间',
+              xAxis: { title: '规则名称' },
+              yAxis: { title: '执行次数' }
+            },
+            position: { section_id: 'rule_performance', order: 1 }
+          },
+          {
+            id: 'processing_time',
+            name: '处理时间分布',
+            type: 'line',
+            data_query: 'SELECT DATE(created_at) as date, AVG(execution_time_ms) as avg_time FROM rule_execution_logs WHERE created_at >= CURRENT_DATE - INTERVAL \'7 days\' GROUP BY DATE(created_at) ORDER BY date',
+            options: {
+              title: '每日平均处理时间',
+              xAxis: { title: '日期' },
+              yAxis: { title: '平均时间(ms)' }
+            },
+            position: { section_id: 'processing_time', order: 1 }
+          }
+        );
+        break;
+
+      case 'summary':
+        configs.push(
+          {
+            id: 'key_metrics',
+            name: '关键指标仪表板',
+            type: 'doughnut',
+            data_query: 'SELECT \'已处理\' as category, COUNT(*) as count FROM messages WHERE is_read = true UNION SELECT \'未处理\' as category, COUNT(*) as count FROM messages WHERE is_read = false',
+            options: {
+              title: '邮件处理状态'
+            },
+            position: { section_id: 'key_metrics', order: 1 }
+          }
+        );
+        break;
+    }
+
+    return configs;
+  }
+
+  /**
+   * 获取所有模板（系统+自定义）
+   */
+  async getAllTemplates(query: ReportTemplateQuery = {}): Promise<{ templates: ReportTemplate[]; total: number }> {
+    try {
+      // 从系统模板开始
+      let systemTemplates = Array.from(this.systemTemplates.values());
+
+      // 应用系统模板过滤
+      if (query.category) {
+        systemTemplates = systemTemplates.filter(t => t.category === query.category);
+      }
+      if (query.report_type) {
+        systemTemplates = systemTemplates.filter(t => t.report_type === query.report_type);
+      }
+      if (query.search) {
+        const searchLower = query.search.toLowerCase();
+        systemTemplates = systemTemplates.filter(t => 
+          t.name.toLowerCase().includes(searchLower) || 
+          (t.description && t.description.toLowerCase().includes(searchLower))
+        );
+      }
+
+      // 获取自定义模板
+      const customTemplates = await this.getCustomTemplates(query);
+
+      // 合并结果
+      let allTemplates = [...systemTemplates, ...customTemplates.templates];
+
+      // 应用通用过滤
+      if (query.is_system !== undefined) {
+        allTemplates = allTemplates.filter(t => t.is_system === query.is_system);
+      }
+
+      // 排序
+      allTemplates.sort((a, b) => {
+        if (a.usage_count !== b.usage_count) {
+          return b.usage_count - a.usage_count; // 按使用次数降序
+        }
+        return b.updated_at.getTime() - a.updated_at.getTime(); // 按更新时间降序
+      });
+
+      // 分页
+      const offset = query.offset || 0;
+      const limit = query.limit || 20;
+      const paginatedTemplates = allTemplates.slice(offset, offset + limit);
+
+      return {
+        templates: paginatedTemplates,
+        total: allTemplates.length
+      };
+
+    } catch (error) {
+      logger.error('获取模板列表失败:', error);
+      throw new Error('获取模板列表失败');
+    }
+  }
+
+  /**
+   * 获取自定义模板
+   */
+  private async getCustomTemplates(query: ReportTemplateQuery): Promise<{ templates: ReportTemplate[]; total: number }> {
+    try {
+      let whereConditions = ['deleted_at IS NULL'];
+      const queryParams: any[] = [];
+      let paramIndex = 1;
+
+      // 构建WHERE子句
+      if (query.category) {
+        whereConditions.push(`category = $${paramIndex++}`);
+        queryParams.push(query.category);
+      }
+      if (query.report_type) {
+        whereConditions.push(`report_type = $${paramIndex++}`);
+        queryParams.push(query.report_type);
+      }
+      if (query.created_by) {
+        whereConditions.push(`created_by = $${paramIndex++}`);
+        queryParams.push(query.created_by);
+      }
+      if (query.search) {
+        whereConditions.push(`(name ILIKE $${paramIndex} OR description ILIKE $${paramIndex})`);
+        queryParams.push(`%${query.search}%`);
+        paramIndex++;
+      }
+
+      const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
+
+      // 获取总数
+      const countQuery = `SELECT COUNT(*) as count FROM report_templates ${whereClause}`;
+      const countResult = await this.db.query(countQuery, queryParams);
+      const total = parseInt(countResult.rows[0].count);
+
+      // 获取数据
+      const dataQuery = `
+        SELECT * FROM report_templates 
+        ${whereClause}
+        ORDER BY usage_count DESC, updated_at DESC
+        LIMIT $${paramIndex++} OFFSET $${paramIndex++}
+      `;
+      
+      queryParams.push(query.limit || 20);
+      queryParams.push(query.offset || 0);
+
+      const dataResult = await this.db.query(dataQuery, queryParams);
+      
+      const templates = dataResult.rows.map(row => ({
+        ...row,
+        default_parameters: JSON.parse(row.default_parameters),
+        layout_config: JSON.parse(row.layout_config),
+        chart_configs: JSON.parse(row.chart_configs),
+        is_system: false
+      }));
+
+      return { templates, total };
+
+    } catch (error) {
+      logger.error('获取自定义模板失败:', error);
+      return { templates: [], total: 0 };
+    }
+  }
+
+  /**
+   * 根据ID获取模板
+   */
+  async getTemplateById(templateId: string): Promise<ReportTemplate | null> {
+    try {
+      // 先检查系统模板
+      if (this.systemTemplates.has(templateId)) {
+        return this.systemTemplates.get(templateId)!;
+      }
+
+      // 检查缓存
+      const cacheKey = `${this.cachePrefix}${templateId}`;
+      const cached = await this.redis.get(cacheKey);
+      if (cached) {
+        return JSON.parse(cached);
+      }
+
+      // 查询数据库
+      const result = await this.db.query(
+        'SELECT * FROM report_templates WHERE id = $1 AND deleted_at IS NULL',
+        [templateId]
+      );
+
+      if (result.rows.length === 0) {
+        return null;
+      }
+
+      const template = {
+        ...result.rows[0],
+        default_parameters: JSON.parse(result.rows[0].default_parameters),
+        layout_config: JSON.parse(result.rows[0].layout_config),
+        chart_configs: JSON.parse(result.rows[0].chart_configs),
+        is_system: false
+      };
+
+      // 缓存结果
+      await this.redis.setex(cacheKey, 3600, JSON.stringify(template));
+
+      return template;
+
+    } catch (error) {
+      logger.error(`获取模板失败: ${templateId}`, error);
+      throw new Error('获取模板失败');
+    }
+  }
+
+  /**
+   * 创建自定义模板
+   */
+  async createTemplate(data: CreateReportTemplateData, createdBy: string): Promise<ReportTemplate> {
+    try {
+      const templateId = uuidv4();
+      const now = new Date();
+
+      const template: ReportTemplate = {
+        id: templateId,
+        name: data.name,
+        description: data.description,
+        category: data.category,
+        report_type: data.report_type,
+        default_parameters: data.default_parameters,
+        layout_config: data.layout_config,
+        chart_configs: data.chart_configs,
+        is_system: false,
+        created_by: createdBy,
+        usage_count: 0,
+        created_at: now,
+        updated_at: now
+      };
+
+      await this.db.query(`
+        INSERT INTO report_templates (
+          id, name, description, category, report_type,
+          default_parameters, layout_config, chart_configs,
+          is_system, created_by, usage_count, created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      `, [
+        templateId, data.name, data.description, data.category, data.report_type,
+        JSON.stringify(data.default_parameters),
+        JSON.stringify(data.layout_config),
+        JSON.stringify(data.chart_configs),
+        false, createdBy, 0, now, now
+      ]);
+
+      logger.info(`创建自定义模板: ${templateId}`);
+      return template;
+
+    } catch (error) {
+      logger.error('创建模板失败:', error);
+      throw new Error('创建模板失败');
+    }
+  }
+
+  /**
+   * 更新模板
+   */
+  async updateTemplate(templateId: string, data: UpdateReportTemplateData, userId: string): Promise<ReportTemplate> {
+    try {
+      // 系统模板不允许更新
+      if (this.systemTemplates.has(templateId)) {
+        throw new Error('系统模板不允许修改');
+      }
+
+      const existing = await this.getTemplateById(templateId);
+      if (!existing) {
+        throw new Error('模板不存在');
+      }
+
+      if (existing.created_by !== userId) {
+        throw new Error('只能修改自己创建的模板');
+      }
+
+      const updateFields = [];
+      const updateValues = [];
+      let paramIndex = 1;
+
+      if (data.name !== undefined) {
+        updateFields.push(`name = $${paramIndex++}`);
+        updateValues.push(data.name);
+      }
+      if (data.description !== undefined) {
+        updateFields.push(`description = $${paramIndex++}`);
+        updateValues.push(data.description);
+      }
+      if (data.category !== undefined) {
+        updateFields.push(`category = $${paramIndex++}`);
+        updateValues.push(data.category);
+      }
+      if (data.default_parameters !== undefined) {
+        updateFields.push(`default_parameters = $${paramIndex++}`);
+        updateValues.push(JSON.stringify(data.default_parameters));
+      }
+      if (data.layout_config !== undefined) {
+        updateFields.push(`layout_config = $${paramIndex++}`);
+        updateValues.push(JSON.stringify(data.layout_config));
+      }
+      if (data.chart_configs !== undefined) {
+        updateFields.push(`chart_configs = $${paramIndex++}`);
+        updateValues.push(JSON.stringify(data.chart_configs));
+      }
+
+      updateFields.push(`updated_at = $${paramIndex++}`);
+      updateValues.push(new Date());
+
+      updateValues.push(templateId);
+
+      const query = `
+        UPDATE report_templates 
+        SET ${updateFields.join(', ')}
+        WHERE id = $${paramIndex} AND deleted_at IS NULL
+      `;
+
+      await this.db.query(query, updateValues);
+
+      // 清除缓存
+      const cacheKey = `${this.cachePrefix}${templateId}`;
+      await this.redis.del(cacheKey);
+
+      const updatedTemplate = await this.getTemplateById(templateId);
+      logger.info(`更新模板: ${templateId}`);
+      
+      return updatedTemplate!;
+
+    } catch (error) {
+      logger.error(`更新模板失败: ${templateId}`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * 删除模板
+   */
+  async deleteTemplate(templateId: string, userId: string): Promise<void> {
+    try {
+      // 系统模板不允许删除
+      if (this.systemTemplates.has(templateId)) {
+        throw new Error('系统模板不允许删除');
+      }
+
+      const existing = await this.getTemplateById(templateId);
+      if (!existing) {
+        throw new Error('模板不存在');
+      }
+
+      if (existing.created_by !== userId) {
+        throw new Error('只能删除自己创建的模板');
+      }
+
+      // 软删除
+      await this.db.query(
+        'UPDATE report_templates SET deleted_at = $1, updated_at = $1 WHERE id = $2',
+        [new Date(), templateId]
+      );
+
+      // 清除缓存
+      const cacheKey = `${this.cachePrefix}${templateId}`;
+      await this.redis.del(cacheKey);
+
+      logger.info(`删除模板: ${templateId}`);
+
+    } catch (error) {
+      logger.error(`删除模板失败: ${templateId}`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * 增加模板使用次数
+   */
+  async incrementUsageCount(templateId: string): Promise<void> {
+    try {
+      // 系统模板使用次数在内存中更新
+      if (this.systemTemplates.has(templateId)) {
+        const template = this.systemTemplates.get(templateId)!;
+        template.usage_count++;
+        return;
+      }
+
+      // 自定义模板在数据库中更新
+      await this.db.query(
+        'UPDATE report_templates SET usage_count = usage_count + 1, updated_at = $1 WHERE id = $2',
+        [new Date(), templateId]
+      );
+
+      // 清除缓存
+      const cacheKey = `${this.cachePrefix}${templateId}`;
+      await this.redis.del(cacheKey);
+
+    } catch (error) {
+      logger.error(`更新模板使用次数失败: ${templateId}`, error);
+      // 不抛出异常，避免影响报告生成
+    }
+  }
+
+  /**
+   * 获取模板分类列表
+   */
+  async getCategories(): Promise<string[]> {
+    try {
+      // 系统模板分类
+      const systemCategories = Array.from(this.systemTemplates.values())
+        .map(t => t.category);
+
+      // 自定义模板分类
+      const result = await this.db.query(
+        'SELECT DISTINCT category FROM report_templates WHERE deleted_at IS NULL'
+      );
+      const customCategories = result.rows.map(row => row.category);
+
+      // 去重并排序
+      const allCategories = [...new Set([...systemCategories, ...customCategories])];
+      return allCategories.sort();
+
+    } catch (error) {
+      logger.error('获取模板分类失败:', error);
+      return ['daily', 'weekly', 'monthly', 'performance', 'summary'];
+    }
+  }
+
+  /**
+   * 复制模板（基于现有模板创建新模板）
+   */
+  async duplicateTemplate(sourceTemplateId: string, newName: string, userId: string): Promise<ReportTemplate> {
+    try {
+      const sourceTemplate = await this.getTemplateById(sourceTemplateId);
+      if (!sourceTemplate) {
+        throw new Error('源模板不存在');
+      }
+
+      const newTemplateData: CreateReportTemplateData = {
+        name: newName,
+        description: `基于 "${sourceTemplate.name}" 创建的副本`,
+        category: sourceTemplate.category,
+        report_type: sourceTemplate.report_type,
+        default_parameters: sourceTemplate.default_parameters,
+        layout_config: sourceTemplate.layout_config,
+        chart_configs: sourceTemplate.chart_configs
+      };
+
+      const newTemplate = await this.createTemplate(newTemplateData, userId);
+      
+      // 增加源模板使用次数
+      await this.incrementUsageCount(sourceTemplateId);
+
+      logger.info(`复制模板: ${sourceTemplateId} -> ${newTemplate.id}`);
+      return newTemplate;
+
+    } catch (error) {
+      logger.error(`复制模板失败: ${sourceTemplateId}`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * 验证模板配置
+   */
+  validateTemplate(template: CreateReportTemplateData | UpdateReportTemplateData): string[] {
+    const errors: string[] = [];
+
+    if ('name' in template && (!template.name || template.name.trim().length === 0)) {
+      errors.push('模板名称不能为空');
+    }
+
+    if ('name' in template && template.name && template.name.length > 100) {
+      errors.push('模板名称不能超过100个字符');
+    }
+
+    if ('category' in template && (!template.category || template.category.trim().length === 0)) {
+      errors.push('模板分类不能为空');
+    }
+
+    if ('report_type' in template && !Object.values(ReportType).includes(template.report_type!)) {
+      errors.push('无效的报告类型');
+    }
+
+    if ('layout_config' in template && template.layout_config) {
+      if (!template.layout_config.page_size || !template.layout_config.orientation) {
+        errors.push('布局配置不完整');
+      }
+    }
+
+    return errors;
+  }
+
+  /**
+   * 获取使用统计
+   */
+  async getUsageStatistics(): Promise<{
+    total_templates: number;
+    system_templates: number;
+    custom_templates: number;
+    most_used: Array<{ id: string; name: string; usage_count: number }>;
+  }> {
+    try {
+      // 系统模板统计
+      const systemTemplates = Array.from(this.systemTemplates.values());
+      const systemCount = systemTemplates.length;
+
+      // 自定义模板统计
+      const customResult = await this.db.query(
+        'SELECT COUNT(*) as count FROM report_templates WHERE deleted_at IS NULL'
+      );
+      const customCount = parseInt(customResult.rows[0].count);
+
+      // 最常用的模板
+      const mostUsedSystem = systemTemplates
+        .map(t => ({ id: t.id, name: t.name, usage_count: t.usage_count }))
+        .sort((a, b) => b.usage_count - a.usage_count)
+        .slice(0, 5);
+
+      const mostUsedCustomResult = await this.db.query(`
+        SELECT id, name, usage_count 
+        FROM report_templates 
+        WHERE deleted_at IS NULL 
+        ORDER BY usage_count DESC 
+        LIMIT 5
+      `);
+      const mostUsedCustom = mostUsedCustomResult.rows;
+
+      const mostUsed = [...mostUsedSystem, ...mostUsedCustom]
+        .sort((a, b) => b.usage_count - a.usage_count)
+        .slice(0, 10);
+
+      return {
+        total_templates: systemCount + customCount,
+        system_templates: systemCount,
+        custom_templates: customCount,
+        most_used: mostUsed
+      };
+
+    } catch (error) {
+      logger.error('获取使用统计失败:', error);
+      throw new Error('获取使用统计失败');
+    }
+  }
+}
