@@ -88,11 +88,21 @@ class DatabaseManager {
     const supabaseUrl = process.env.SUPABASE_URL;
     const supabaseKey = process.env.SUPABASE_ANON_KEY;
 
-    if (supabaseUrl && supabaseKey) {
-      this.supabase = createClient(supabaseUrl, supabaseKey);
-      logger.info('Supabase client initialized successfully');
+    // 检查 URL 格式是否有效
+    const isValidUrl = supabaseUrl && 
+                      supabaseKey && 
+                      (supabaseUrl.startsWith('http://') || supabaseUrl.startsWith('https://')) &&
+                      !supabaseUrl.includes('your_supabase_url');
+
+    if (isValidUrl) {
+      try {
+        this.supabase = createClient(supabaseUrl, supabaseKey);
+        logger.info('Supabase client initialized successfully');
+      } catch (error) {
+        logger.warn('Failed to initialize Supabase client, using PostgreSQL directly', error);
+      }
     } else {
-      logger.warn('Supabase configuration not found, using PostgreSQL directly');
+      logger.warn('Supabase configuration not found or invalid, using PostgreSQL directly');
     }
   }
 

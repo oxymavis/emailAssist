@@ -67,6 +67,7 @@ export interface ReportParameters {
   group_by?: string;
   filters?: Record<string, any>;
   custom_fields?: string[];
+  email_filters?: EmailFilter;
 }
 
 // ��
@@ -83,6 +84,8 @@ export interface ReportStatistics {
   generation_time_ms?: number;
   file_size_bytes?: number;
   chart_count?: number;
+  processed_emails?: number;
+  table_count?: number;
 }
 
 // �J!
@@ -95,10 +98,13 @@ export interface ReportTemplate {
   is_system: boolean;
   is_active: boolean;
   configuration: TemplateConfiguration;
+  default_parameters?: ReportParameters;
   usage_count: number;
   created_by?: string;
   created_at: Date;
   updated_at: Date;
+  layout_config?: LayoutConfig;
+  chart_configs?: ChartConfig[];
 }
 
 // !Mn
@@ -139,16 +145,16 @@ export interface ReportSchedule {
   run_count: number;
   created_at: Date;
   updated_at: Date;
+  is_active: boolean;
+  next_run?: Date;
+  report_id?: string;
+  success_count?: number;
+  failure_count?: number;
+  retention_days?: number;
 }
 
 // �n
-export interface NotificationSettings {
-  email_notifications: boolean;
-  webhook_url?: string;
-  recipients: string[];
-  notify_on_success: boolean;
-  notify_on_failure: boolean;
-}
+// NotificationSettings interface is defined later in the file
 
 // ��Jpn��
 export interface CreateReportData {
@@ -188,13 +194,7 @@ export interface ReportQuery {
 }
 
 // �!pn��
-export interface CreateReportTemplateData {
-  name: string;
-  description?: string;
-  category: string;
-  report_type: ReportType;
-  configuration: TemplateConfiguration;
-}
+// CreateReportTemplateData interface is defined later in the file (this was a duplicate)
 
 // ��!pn��
 export interface UpdateReportTemplateData {
@@ -216,15 +216,7 @@ export interface TemplateQuery {
 }
 
 // ����pn��
-export interface CreateReportScheduleData {
-  template_id: string;
-  name: string;
-  description?: string;
-  cron_expression: string;
-  timezone?: string;
-  parameters: ReportParameters;
-  notification_settings: NotificationSettings;
-}
+// CreateReportScheduleData interface is defined later in the file (this was a duplicate)
 
 // �����pn��
 export interface UpdateReportScheduleData {
@@ -285,6 +277,7 @@ export interface ReportTemplateQuery {
   report_type?: ReportType;
   is_system?: boolean;
   is_active?: boolean;
+  created_by?: string;
   limit?: number;
   offset?: number;
   search?: string;
@@ -297,6 +290,8 @@ export interface ReportScheduleQuery {
   limit?: number;
   offset?: number;
   is_active?: boolean;
+  next_run_before?: Date;
+  next_run_after?: Date;
 }
 
 export interface NotificationSettings {
@@ -307,6 +302,9 @@ export interface NotificationSettings {
   notify_on_success?: boolean;
   notify_on_failure?: boolean;
   retention_days?: number;
+  success_notification?: boolean;
+  failure_notification?: boolean;
+  summary_notification?: boolean;
 }
 
 export interface UpdateReportScheduleData {
@@ -330,6 +328,7 @@ export interface CreateReportScheduleData {
   timezone?: string;
   parameters: ReportParameters;
   notification_settings: NotificationSettings;
+  retention_days?: number;
 }
 
 export interface CreateReportTemplateData {
@@ -339,6 +338,8 @@ export interface CreateReportTemplateData {
   report_type: ReportType;
   configuration: TemplateConfiguration;
   default_parameters?: ReportParameters;
+  layout_config?: LayoutConfig;
+  chart_configs?: ChartConfig[];
 }
 
 export interface UpdateReportTemplateData {
@@ -361,6 +362,33 @@ export interface ReportData {
   data: any;
   charts?: ChartConfig[];
   metadata?: Record<string, any>;
+  summary?: {
+    total_emails: number;
+    unread_count: number;
+    important_count: number;
+    categories: Record<string, number>;
+    time_distribution: Record<string, number>;
+    sender_stats: Array<{ sender: string; count: number; }>;
+    keyword_frequency: Record<string, number>;
+  };
+  detailed_stats?: {
+    hourly_distribution: Record<string, number>;
+    daily_distribution: Record<string, number>;
+    weekly_distribution: Record<string, number>;
+    monthly_distribution: Record<string, number>;
+  };
+  ai_insights?: {
+    trends: string[];
+    patterns: string[];
+    recommendations: string[];
+    sentiment_analysis: Record<string, number>;
+  };
+  rule_performance?: {
+    rules_triggered: Array<{ rule_id: string; count: number; }>;
+    accuracy_metrics: Record<string, number>;
+    suggestions: string[];
+  };
+  recommendations?: string[];
 }
 
 export interface EmailFilter {
@@ -374,10 +402,13 @@ export interface EmailFilter {
 }
 
 export interface ChartConfig {
+  id?: string;
+  name?: string;
   type: string;
   title: string;
   data: any;
   options?: Record<string, any>;
+  data_query?: string;
 }
 
 export interface LayoutConfig {
@@ -391,6 +422,17 @@ export interface LayoutConfig {
   };
   header?: string;
   footer?: string;
+  sections?: Array<{
+    id: string;
+    name?: string;
+    title: string;
+    type: string;
+    content?: any;
+    position?: { x: number; y: number; };
+    size?: { width: number; height: number; };
+    order?: number;
+    config?: any;
+  }>;
 }
 
 export interface TableConfig {

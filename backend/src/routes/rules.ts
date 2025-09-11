@@ -8,13 +8,13 @@ import { RulesController,
   fromTemplateValidation,
   importRulesValidation 
 } from '@/controllers/RulesController';
-import { authenticateToken } from '@/middleware/auth';
+import { authenticate } from '@/middleware/auth';
 import { param } from 'express-validator';
 
 const router = Router();
 
 // 应用认证中间件到所有路由
-router.use(authenticateToken);
+router.use(authenticate);
 
 // 规则管理路由
 /**

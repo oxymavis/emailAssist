@@ -71,7 +71,7 @@ export class ReportsController {
         limit: parseInt(req.query.limit as string) || 20,
         offset: parseInt(req.query.offset as string) || 0,
         sort_by: req.query.sort_by as string || 'created_at',
-        sort_order: (req.query.sort_order as 'ASC' | 'DESC') || 'DESC'
+        sort_order: (req.query.sort_order as 'asc' | 'desc') || 'desc'
       };
 
       const result = await this.getReportsList(query);
@@ -236,7 +236,7 @@ export class ReportsController {
   async downloadReport(req: AuthRequest, res: Response): Promise<void> {
     try {
       const reportId = req.params.id;
-      const format = req.query.format as string || 'pdf';
+      const format = req.query.format as string || ReportFormat.PDF;
 
       const report = await this.getReportDetails(reportId, req.user!.id);
       if (!report) {
@@ -399,7 +399,7 @@ export class ReportsController {
 
     // 获取数据
     const sortBy = this.getSafeColumnName(query.sort_by || 'created_at');
-    const sortOrder = query.sort_order === 'ASC' ? 'ASC' : 'DESC';
+    const sortOrder = query.sort_order === 'asc' ? 'ASC' : 'DESC';
     
     const dataQuery = `
       SELECT * FROM reports 

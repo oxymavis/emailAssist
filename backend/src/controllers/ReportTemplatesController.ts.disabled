@@ -9,7 +9,8 @@ import {
   CreateReportTemplateData,
   UpdateReportTemplateData,
   ReportTemplateQuery,
-  ReportType
+  ReportType,
+  ReportFormat
 } from '../models/Report';
 import { ReportTemplateService } from '../services/ReportTemplateService';
 import { AuthRequest } from '../types';
@@ -105,6 +106,21 @@ export class ReportTemplatesController {
         description: req.body.description,
         category: req.body.category,
         report_type: req.body.report_type,
+        configuration: req.body.configuration || {
+          default_format: req.body.default_format || ['json'],
+          default_parameters: req.body.default_parameters || {},
+          required_fields: req.body.required_fields || [],
+          optional_fields: req.body.optional_fields || [],
+          chart_types: req.body.chart_types || [],
+          export_options: req.body.export_options || {
+            include_raw_data: true,
+            include_summary: true,
+            include_charts: true,
+            custom_branding: false
+          },
+          layout_config: req.body.layout_config || {},
+          chart_configs: req.body.chart_configs || []
+        },
         default_parameters: req.body.default_parameters || {},
         layout_config: req.body.layout_config,
         chart_configs: req.body.chart_configs || []
@@ -292,7 +308,7 @@ export class ReportTemplatesController {
           end_date: new Date(req.body.date_range.end_date),
           timezone: req.body.date_range.timezone || 'Asia/Shanghai'
         },
-        format: req.body.format || ['pdf'],
+        format: req.body.format || [ReportFormat.PDF],
         parameters: {
           ...template.default_parameters,
           ...req.body.parameters

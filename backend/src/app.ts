@@ -131,7 +131,7 @@ class App {
    * Setup API routes that require database connections
    */
   private setupDatabaseRoutes(): void {
-    // Mount API routes with database connections (for reports functionality)
+    // Mount API routes with database connections
     this.app.use(API_CONFIG.BASE_PATH, createRoutes(database.getPool(), redis));
   }
 

@@ -518,12 +518,12 @@ export class ReportSchedulerService {
       description: `自动生成的计划报告`,
       report_type: this.getReportTypeFromSchedule(schedule),
       date_range: this.getDateRangeFromSchedule(schedule),
-      format: ['pdf', 'excel'],
+      format: [ReportFormat.PDF, ReportFormat.EXCEL],
       parameters: {
         include_charts: true,
         include_attachments: true,
-        metrics: ['total_emails', 'response_time', 'ai_analysis'],
-        group_by: ['priority', 'sender', 'category']
+        // metrics: ['total_emails', 'response_time', 'ai_analysis'],
+        group_by: 'priority'
       },
       template_id: schedule.template_id
     };

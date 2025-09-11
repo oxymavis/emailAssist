@@ -8,7 +8,7 @@ import emailRoutes from './email';
 import analysisRoutes from './analysis';
 import rulesRoutes from './rules';
 import demoRoutes from './demo';
-import { createReportsRoutes } from './reports';
+// import { createReportsRoutes } from './reports'; // 暂时注释掉
 
 // Create a function to setup routes with database connections
 export function createRoutes(db: Pool, redis: typeof RedisManager): Router {
@@ -53,7 +53,7 @@ router.get('/', (req, res) => {
   router.use('/rules', rulesRoutes);
   router.use('/demo', demoRoutes); // Demo routes for rule engine demonstration
   router.use('/', analysisRoutes); // Analysis routes are mounted directly since they include full paths
-  router.use('/reports', createReportsRoutes(db, redis)); // Reports routes with database connections
+  // router.use('/reports', createReportsRoutes(db, redis)); // 暂时注释掉，等修复TypeScript错误后再启用
 
   return router;
 }

@@ -11,13 +11,13 @@ import AnalysisController, {
   validateReanalyze,
   validateAnalysisHistory
 } from '@/controllers/AnalysisController';
-import { requireAuth } from '@/middleware/auth';
+import { authenticate } from '@/middleware/auth';
 import { rateLimiter } from '@/middleware';
 
 const router = Router();
 
 // 所有分析路由都需要认证
-router.use(requireAuth);
+router.use(authenticate);
 
 /**
  * @route POST /api/v1/emails/:id/analyze

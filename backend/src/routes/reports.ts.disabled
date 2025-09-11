@@ -40,7 +40,7 @@ export function createReportsRoutes(db: Pool, redis: typeof RedisManager): Route
   const router = Router();
 
   // 初始化服务
-  const reportService = new ReportGenerationService(db, redis);
+  const reportService = new ReportGenerationService(db);
   const templateService = new ReportTemplateService(db, redis);
   const schedulerService = new ReportSchedulerService(db, redis, reportService);
 
