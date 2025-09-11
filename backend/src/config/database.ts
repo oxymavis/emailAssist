@@ -244,15 +244,24 @@ export async function createTables(): Promise<void> {
       CREATE INDEX IF NOT EXISTS idx_email_accounts_is_connected ON email_accounts(is_connected);
     `);
 
-    // Create updated_at trigger function
+    // Create updated_at trigger function (use IF NOT EXISTS to prevent concurrent creation)
     await db.query(`
-      CREATE OR REPLACE FUNCTION update_updated_at_column()
-      RETURNS TRIGGER AS $$
+      DO $$
       BEGIN
-        NEW.updated_at = NOW();
-        RETURN NEW;
-      END;
-      $$ language 'plpgsql';
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.routines 
+          WHERE routine_name = 'update_updated_at_column' 
+          AND routine_schema = current_schema()
+        ) THEN
+          CREATE FUNCTION update_updated_at_column()
+          RETURNS TRIGGER AS $trigger$
+          BEGIN
+            NEW.updated_at = NOW();
+            RETURN NEW;
+          END;
+          $trigger$ language 'plpgsql';
+        END IF;
+      END $$;
     `);
 
     // Create triggers

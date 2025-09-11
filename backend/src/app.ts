@@ -131,8 +131,16 @@ class App {
    * Setup API routes that require database connections
    */
   private setupDatabaseRoutes(): void {
-    // Mount API routes with database connections
-    this.app.use(API_CONFIG.BASE_PATH, createRoutes(database.getPool(), redis));
+    try {
+      logger.info('Setting up database routes...');
+      // Mount API routes with database connections
+      const apiRoutes = createRoutes(database.getPool(), redis);
+      this.app.use(API_CONFIG.BASE_PATH, apiRoutes);
+      logger.info(`API routes mounted at ${API_CONFIG.BASE_PATH}`);
+    } catch (error) {
+      logger.error('Failed to setup database routes', error);
+      throw error;
+    }
   }
 
   /**
