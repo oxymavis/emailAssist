@@ -165,6 +165,211 @@ export const testConfig = {
   }
 };
 
+// 邮件分析测试数据
+export const emailTestData = {
+  urgentEmail: {
+    content: 'URGENT: Critical production system is down! Need immediate assistance!',
+    from: 'ops@company.com',
+    subject: 'URGENT: Production System Down',
+    expectedSentiment: 'negative',
+    expectedPriority: 'high'
+  },
+  
+  positiveEmail: {
+    content: 'Thank you so much for the excellent service! Everything works perfectly and our team is very satisfied with the results.',
+    from: 'happy@customer.com',
+    subject: 'Thanks for great service',
+    expectedSentiment: 'positive',
+    expectedPriority: 'low'
+  },
+  
+  negativeEmail: {
+    content: 'I am extremely disappointed with the service. The system has been failing repeatedly and causing major issues for our business.',
+    from: 'angry@customer.com',
+    subject: 'Very disappointed with service',
+    expectedSentiment: 'negative',
+    expectedPriority: 'high'
+  },
+  
+  neutralEmail: {
+    content: 'Please provide an update on the project status. We need to know the current progress and timeline.',
+    from: 'manager@company.com',
+    subject: 'Project Status Update Request',
+    expectedSentiment: 'neutral',
+    expectedPriority: 'medium'
+  },
+  
+  highPriorityEmail: {
+    content: 'CRITICAL: Security breach detected. Immediate action required to secure our systems.',
+    from: 'security@company.com',
+    subject: 'CRITICAL: Security Alert',
+    expectedPriority: 'high'
+  },
+  
+  mediumPriorityEmail: {
+    content: 'We would like to schedule a meeting next week to discuss the new project requirements.',
+    from: 'pm@company.com',
+    subject: 'Meeting Schedule Request',
+    expectedPriority: 'medium'
+  },
+  
+  lowPriorityEmail: {
+    content: 'Just wanted to share some feedback about the recent improvements to the user interface.',
+    from: 'user@company.com',
+    subject: 'UI Feedback',
+    expectedPriority: 'low'
+  },
+  
+  keywordRichEmail: {
+    content: 'The project deadline is approaching fast and we need to discuss the budget allocation for the urgent meeting scheduled tomorrow.',
+    from: 'pm@company.com',
+    subject: 'Project Deadline and Budget Meeting',
+    expectedKeywords: ['project', 'deadline', 'budget', 'meeting', 'urgent']
+  },
+  
+  sampleEmail: {
+    content: 'This is a sample email content used for testing the analysis functionality.',
+    from: 'test@example.com',
+    subject: 'Sample Email for Testing'
+  },
+  
+  largeEmail: {
+    content: 'This is a very long email content that simulates a real-world scenario with extensive text. '.repeat(100) + 
+             'The purpose is to test the performance of the email analysis system when processing large amounts of text data.',
+    from: 'sender@company.com',
+    subject: 'Large Email Content for Performance Testing'
+  },
+  
+  chineseEmail: {
+    content: '您好，我需要关于产品功能的帮助。系统运行正常，但我有一些问题需要解决。谢谢您的协助。',
+    from: 'user@china.com',
+    subject: '产品功能咨询',
+    expectedSentiment: 'neutral'
+  },
+  
+  englishEmail: {
+    content: 'Hello, I need help with the product features. The system is working fine, but I have some questions that need to be resolved.',
+    from: 'user@company.com',
+    subject: 'Product Feature Inquiry',
+    expectedSentiment: 'neutral'
+  }
+};
+
+// 性能测试配置
+export const performanceTestData = {
+  largeDataset: {
+    emailCount: 1000,
+    batchSize: 100,
+    expectedProcessingTime: 30000, // 30秒
+  },
+  
+  concurrentUsers: {
+    userCount: 50,
+    requestsPerUser: 10,
+    expectedResponseTime: 2000, // 2秒
+  },
+  
+  loadTesting: {
+    rampUpTime: 60000, // 1分钟
+    sustainTime: 300000, // 5分钟
+    rampDownTime: 60000, // 1分钟
+  }
+};
+
+// 可访问性测试数据
+export const accessibilityTestData = {
+  keyboardNavigation: [
+    { key: 'Tab', expectedFocus: 'email-content-textarea' },
+    { key: 'Tab', expectedFocus: 'from-field-input' },
+    { key: 'Tab', expectedFocus: 'subject-field-input' },
+    { key: 'Tab', expectedFocus: 'analyze-button' },
+  ],
+  
+  screenReader: {
+    requiredAriaLabels: [
+      'email-content-textarea',
+      'analyze-button',
+      'analysis-results',
+      'sentiment-result',
+      'priority-result'
+    ],
+    requiredRoles: [
+      { element: 'analysis-results', role: 'region' },
+      { element: 'sentiment-chart', role: 'img' },
+      { element: 'priority-distribution', role: 'img' }
+    ]
+  },
+  
+  colorContrast: {
+    minimumRatio: 4.5,
+    elementsToCheck: [
+      'analyze-button',
+      'sentiment-result',
+      'priority-result',
+      'error-message'
+    ]
+  }
+};
+
+// API mock响应数据
+export const apiMockData = {
+  emailAnalysis: {
+    success: {
+      analysis: {
+        sentiment: 'positive',
+        priority: 'medium',
+        keywords: ['help', 'support', 'question'],
+        confidence_score: 0.85,
+        processing_time: 1.2
+      }
+    },
+    
+    error: {
+      detail: 'AI service temporarily unavailable',
+      error_code: 'SERVICE_UNAVAILABLE'
+    },
+    
+    validation: {
+      detail: [
+        {
+          loc: ['email_content'],
+          msg: 'field required',
+          type: 'value_error.missing'
+        }
+      ]
+    }
+  },
+  
+  batchAnalysis: {
+    success: {
+      batch_id: 'batch_123456',
+      status: 'processing',
+      total_emails: 50,
+      processed_emails: 0,
+      estimated_time: 120
+    },
+    
+    completed: {
+      batch_id: 'batch_123456',
+      status: 'completed',
+      total_emails: 50,
+      processed_emails: 50,
+      results_summary: {
+        sentiment_distribution: {
+          positive: 20,
+          neutral: 25,
+          negative: 5
+        },
+        priority_distribution: {
+          high: 8,
+          medium: 22,
+          low: 20
+        }
+      }
+    }
+  }
+};
+
 // 数据生成工具函数
 export class TestDataFactory {
   static generateEmail(overrides: Partial<TestEmail> = {}): TestEmail {

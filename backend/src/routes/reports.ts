@@ -5,7 +5,7 @@
 
 import { Router } from 'express';
 import { Pool } from 'pg';
-import RedisManager from '@/config/redis';
+import RedisManager from '../config/redis';
 import { 
   ReportsController,
   validateGetReports,

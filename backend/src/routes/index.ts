@@ -5,11 +5,14 @@ import { API_CONFIG } from '@/config';
 import { healthCheck } from '@/middleware';
 // 逐步启用路由，现在添加邮件处理、分析、规则引擎和演示
 import authRoutes from './auth';
-import emailRoutes from './email';
+import emailServiceRoutes from './email';
 import analysisRoutes from './analysis';
 import rulesRoutes from './rules';
 import demoRoutes from './demo';
-// import { createReportsRoutes } from './reports'; // 暂时注释掉
+import { createReportsRoutes } from './reports';
+import performanceRoutes from './performance';
+import cacheManagementRoutes from './cacheManagement';
+import monitoringRoutes from './monitoring';
 
 // Create a function to setup routes with database connections
 export function createRoutes(db: Pool, redis: typeof RedisManager): Router {
@@ -43,6 +46,9 @@ router.get('/', (req, res) => {
         rules: `${API_CONFIG.BASE_PATH}/rules`,
         demo: `${API_CONFIG.BASE_PATH}/demo`,
         reports: `${API_CONFIG.BASE_PATH}/reports`,
+        performance: `${API_CONFIG.BASE_PATH}/performance`,
+        cache: `${API_CONFIG.BASE_PATH}/cache`,
+        monitoring: `${API_CONFIG.BASE_PATH}/monitoring`,
         health: '/health'
       }
     },
@@ -68,9 +74,9 @@ router.get('/', (req, res) => {
     router.use('/auth', authRoutes);
     console.log('✅ Auth routes mounted successfully');
     
-    console.log('📧 Mounting email routes...');
-    router.use('/email', emailRoutes);
-    console.log('✅ Email routes mounted successfully');
+    console.log('📧 Mounting email service routes...');
+    router.use('/email', emailServiceRoutes);
+    console.log('✅ Email service routes mounted successfully');
     
     console.log('🧠 Mounting analysis routes...');
     router.use('/', analysisRoutes); // Analysis routes are mounted directly since they include full paths
@@ -83,8 +89,22 @@ router.get('/', (req, res) => {
     console.log('🎮 Mounting demo routes...');
     router.use('/demo', demoRoutes); // Demo routes for rule engine demonstration
     console.log('✅ Demo routes mounted successfully');
-    // router.use('/', analysisRoutes); // Analysis routes are mounted directly since they include full paths
-    // router.use('/reports', createReportsRoutes(db, redis)); // 暂时注释掉，等修复TypeScript错误后再启用
+    
+    console.log('📊 Mounting reports routes...');
+    router.use('/reports', createReportsRoutes(db, redis));
+    console.log('✅ Reports routes mounted successfully');
+    
+    console.log('🚀 Mounting performance routes...');
+    router.use('/performance', performanceRoutes);
+    console.log('✅ Performance routes mounted successfully');
+    
+    console.log('💾 Mounting cache management routes...');
+    router.use('/cache', cacheManagementRoutes);
+    console.log('✅ Cache management routes mounted successfully');
+    
+    console.log('📊 Mounting monitoring routes...');
+    router.use('/monitoring', monitoringRoutes);
+    console.log('✅ Monitoring routes mounted successfully');
   } catch (error) {
     console.error('❌ Error mounting routes:', error);
     throw error;
@@ -116,6 +136,9 @@ defaultRouter.get('/', (req, res) => {
         rules: `${API_CONFIG.BASE_PATH}/rules`,
         demo: `${API_CONFIG.BASE_PATH}/demo`,
         reports: `${API_CONFIG.BASE_PATH}/reports`,
+        performance: `${API_CONFIG.BASE_PATH}/performance`,
+        cache: `${API_CONFIG.BASE_PATH}/cache`,
+        monitoring: `${API_CONFIG.BASE_PATH}/monitoring`,
         health: '/health'
       }
     },

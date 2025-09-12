@@ -6,7 +6,9 @@ import { RulesController,
   batchApplyValidation,
   updatePrioritiesValidation,
   fromTemplateValidation,
-  importRulesValidation 
+  importRulesValidation,
+  performanceAnalysisValidation,
+  batchOperationsValidation
 } from '@/controllers/RulesController';
 import { authenticate } from '@/middleware/auth';
 import { param } from 'express-validator';
@@ -101,6 +103,30 @@ router.post('/from-template', fromTemplateValidation, RulesController.createRule
  * @body    {rules: CreateFilterRuleRequest[], replaceExisting?: boolean}
  */
 router.post('/import', importRulesValidation, RulesController.importRules);
+
+/**
+ * @route   GET /api/v1/rules/performance-analysis
+ * @desc    获取规则性能分析
+ * @access  Private
+ * @query   {string} timeframe - 时间范围 (1d, 7d, 30d, 90d)
+ * @query   {boolean} includeInactive - 是否包含非活动规则
+ */
+router.get('/performance-analysis', performanceAnalysisValidation, RulesController.getRulePerformanceAnalysis);
+
+/**
+ * @route   POST /api/v1/rules/batch-operations
+ * @desc    批量规则操作
+ * @access  Private
+ * @body    {operation: string, ruleIds: string[], parameters?: object}
+ */
+router.post('/batch-operations', batchOperationsValidation, RulesController.batchRuleOperations);
+
+/**
+ * @route   GET /api/v1/rules/health-check
+ * @desc    规则健康检查
+ * @access  Private
+ */
+router.get('/health-check', RulesController.getRuleHealthCheck);
 
 /**
  * @route   GET /api/v1/rules/:id

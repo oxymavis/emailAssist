@@ -1,0 +1,931 @@
+/**
+ * 缓存性能优化器
+ * 提供缓存穿透、击穿、雪崩防护，缓存压缩和序列化优化，异步缓存更新机制
+ */
+
+import RedisManager from '@/config/redis';
+import logger from '@/utils/logger';
+import crypto from 'crypto';
+import zlib from 'zlib';
+import { promisify } from 'util';
+import { EventEmitter } from 'events';
+import Semaphore from 'semaphore-async-await';
+
+const gzip = promisify(zlib.gzip);
+const gunzip = promisify(zlib.gunzip);
+
+export interface CacheProtectionConfig {
+  // 缓存穿透防护
+  nullCacheEnabled: boolean;
+  nullCacheTtl: number;
+  bloomFilterEnabled: boolean;
+  
+  // 缓存击穿防护
+  mutexEnabled: boolean;
+  mutexTimeout: number;
+  refreshAheadEnabled: boolean;
+  refreshThreshold: number;
+  
+  // 缓存雪崩防护
+  ttlJitterEnabled: boolean;
+  ttlJitterRange: number;
+  circuitBreakerEnabled: boolean;
+  
+  // 性能优化
+  compressionEnabled: boolean;
+  compressionThreshold: number;
+  serializationOptimized: boolean;
+  batchOperationEnabled: boolean;
+}
+
+export interface PerformanceMetrics {
+  cacheHitRate: number;
+  avgResponseTime: number;
+  throughput: number;
+  errorRate: number;
+  memoryUsage: number;
+  compressionRatio: number;
+  refreshAheadCount: number;
+  circuitBreakerTrips: number;
+}
+
+export interface CircuitBreakerState {
+  state: 'CLOSED' | 'OPEN' | 'HALF_OPEN';
+  failures: number;
+  lastFailTime: number;
+  halfOpenTests: number;
+}
+
+export interface RefreshTask {
+  key: string;
+  fetchFunction: () => Promise<any>;
+  priority: number;
+  ttl: number;
+  scheduled: boolean;
+  retryCount: number;
+}
+
+export class CachePerformanceOptimizer extends EventEmitter {
+  private redis = RedisManager;
+  
+  private config: CacheProtectionConfig = {
+    // 缓存穿透防护
+    nullCacheEnabled: true,
+    nullCacheTtl: 60, // 1分钟
+    bloomFilterEnabled: true,
+    
+    // 缓存击穿防护
+    mutexEnabled: true,
+    mutexTimeout: 10000, // 10秒
+    refreshAheadEnabled: true,
+    refreshThreshold: 0.2, // 20%
+    
+    // 缓存雪崩防护
+    ttlJitterEnabled: true,
+    ttlJitterRange: 0.1, // 10%
+    circuitBreakerEnabled: true,
+    
+    // 性能优化
+    compressionEnabled: true,
+    compressionThreshold: 1024, // 1KB
+    serializationOptimized: true,
+    batchOperationEnabled: true
+  };
+  
+  // 性能指标
+  private metrics: PerformanceMetrics = {
+    cacheHitRate: 0,
+    avgResponseTime: 0,
+    throughput: 0,
+    errorRate: 0,
+    memoryUsage: 0,
+    compressionRatio: 0,
+    refreshAheadCount: 0,
+    circuitBreakerTrips: 0
+  };
+  
+  // 互斥锁管理
+  private mutexMap = new Map<string, Semaphore>();
+  private refreshQueue = new Map<string, RefreshTask>();
+  
+  // 熔断器状态
+  private circuitBreakers = new Map<string, CircuitBreakerState>();
+  
+  // 布隆过滤器 (简化实现)
+  private bloomFilter = new Set<string>();
+  
+  // 性能监控
+  private performanceCounter = {
+    requests: 0,
+    hits: 0,
+    errors: 0,
+    totalResponseTime: 0,
+    startTime: Date.now()
+  };
+  
+  constructor(config?: Partial<CacheProtectionConfig>) {
+    super();
+    
+    if (config) {
+      this.config = { ...this.config, ...config };
+    }
+    
+    // 启动后台任务
+    this.startBackgroundTasks();
+    
+    logger.info('CachePerformanceOptimizer initialized', { config: this.config });
+  }
+
+  /**
+   * 防护增强的缓存获取
+   */
+  async getWithProtection<T>(
+    key: string,
+    fetchFunction?: () => Promise<T>,
+    ttl = 300
+  ): Promise<T | null> {
+    const startTime = Date.now();
+    this.performanceCounter.requests++;
+    
+    try {
+      // 检查熔断器状态
+      if (!this.isCircuitBreakerClosed(key)) {
+        logger.warn('Circuit breaker is open', { key });
+        return null;
+      }
+      
+      // 布隆过滤器检查 (缓存穿透防护)
+      if (this.config.bloomFilterEnabled && !this.bloomFilter.has(key) && !fetchFunction) {
+        logger.debug('Bloom filter miss, key likely does not exist', { key });
+        return null;
+      }
+      
+      // 尝试从缓存获取
+      const cached = await this.getFromCache<T>(key);
+      
+      if (cached !== null) {
+        this.performanceCounter.hits++;
+        this.recordSuccess(key, Date.now() - startTime);
+        
+        // 检查是否需要刷新缓存
+        if (this.config.refreshAheadEnabled && fetchFunction) {
+          await this.scheduleRefreshAhead(key, fetchFunction, ttl);
+        }
+        
+        return cached;
+      }
+      
+      // 缓存未命中，使用回源函数
+      if (!fetchFunction) {
+        // 缓存穿透防护：缓存null值
+        if (this.config.nullCacheEnabled) {
+          await this.cacheNullValue(key);
+        }
+        return null;
+      }
+      
+      // 缓存击穿防护：使用互斥锁
+      if (this.config.mutexEnabled) {
+        return await this.getWithMutex(key, fetchFunction, ttl);
+      }
+      
+      // 直接回源
+      const data = await fetchFunction();
+      await this.setWithOptimization(key, data, ttl);
+      
+      this.recordSuccess(key, Date.now() - startTime);
+      return data;
+      
+    } catch (error) {
+      this.performanceCounter.errors++;
+      this.recordFailure(key, error);
+      logger.error('Cache get with protection failed', { key, error });
+      throw error;
+    }
+  }
+
+  /**
+   * 优化的缓存设置
+   */
+  async setWithOptimization<T>(
+    key: string,
+    data: T,
+    ttl = 300,
+    options: {
+      compress?: boolean;
+      jitter?: boolean;
+      tags?: string[];
+    } = {}
+  ): Promise<boolean> {
+    const startTime = Date.now();
+    
+    try {
+      let processedData: any = data;
+      let metadata = {
+        originalSize: 0,
+        compressedSize: 0,
+        compressed: false,
+        timestamp: Date.now()
+      };
+      
+      // 序列化优化
+      const serialized = this.optimizedSerialize(data);
+      metadata.originalSize = Buffer.byteLength(serialized, 'utf8');
+      
+      // 压缩优化
+      if ((options.compress !== false && this.config.compressionEnabled) &&
+          metadata.originalSize > this.config.compressionThreshold) {
+        
+        const compressed = await gzip(Buffer.from(serialized));
+        processedData = compressed.toString('base64');
+        metadata.compressedSize = compressed.length;
+        metadata.compressed = true;
+        
+        // 更新压缩比统计
+        this.updateCompressionStats(metadata.originalSize, metadata.compressedSize);
+        
+        logger.debug('Data compressed', {
+          key,
+          originalSize: metadata.originalSize,
+          compressedSize: metadata.compressedSize,
+          ratio: (1 - metadata.compressedSize / metadata.originalSize) * 100
+        });
+      } else {
+        processedData = serialized;
+      }
+      
+      // TTL抖动防护 (缓存雪崩防护)
+      let finalTtl = ttl;
+      if (options.jitter !== false && this.config.ttlJitterEnabled) {
+        const jitter = this.config.ttlJitterRange;
+        const randomFactor = 1 + (Math.random() * 2 - 1) * jitter;
+        finalTtl = Math.floor(ttl * randomFactor);
+      }
+      
+      // 存储缓存项
+      const cacheItem = {
+        data: processedData,
+        metadata,
+        tags: options.tags || []
+      };
+      
+      const success = await this.redis.set(
+        `cache:optimized:${key}`,
+        JSON.stringify(cacheItem),
+        finalTtl
+      );
+      
+      if (success) {
+        // 添加到布隆过滤器
+        if (this.config.bloomFilterEnabled) {
+          this.bloomFilter.add(key);
+        }
+        
+        // 设置标签索引
+        if (options.tags && options.tags.length > 0) {
+          await this.setTagIndex(options.tags, key);
+        }
+      }
+      
+      const responseTime = Date.now() - startTime;
+      logger.debug('Cache set with optimization completed', {
+        key,
+        compressed: metadata.compressed,
+        finalTtl,
+        responseTime
+      });
+      
+      return success;
+      
+    } catch (error) {
+      logger.error('Optimized cache set failed', { key, error });
+      return false;
+    }
+  }
+
+  /**
+   * 批量操作优化
+   */
+  async batchGetWithProtection<T>(
+    keys: string[],
+    fetchFunctions?: Map<string, () => Promise<T>>,
+    ttl = 300
+  ): Promise<Map<string, T | null>> {
+    const startTime = Date.now();
+    const results = new Map<string, T | null>();
+    
+    if (keys.length === 0) {
+      return results;
+    }
+    
+    try {
+      // 批量获取缓存数据
+      const cacheResults = await this.batchGetFromCache<T>(keys);
+      const missedKeys: string[] = [];
+      
+      // 处理缓存结果
+      for (const [key, value] of cacheResults) {
+        if (value !== null) {
+          results.set(key, value);
+          this.performanceCounter.hits++;
+        } else {
+          missedKeys.push(key);
+        }
+      }
+      
+      // 处理缓存未命中的键
+      if (missedKeys.length > 0 && fetchFunctions) {
+        await this.batchFetchAndCache(missedKeys, fetchFunctions, ttl, results);
+      }
+      
+      // 为未命中且没有获取函数的键设置null缓存
+      for (const key of missedKeys) {
+        if (!fetchFunctions?.has(key)) {
+          results.set(key, null);
+          if (this.config.nullCacheEnabled) {
+            await this.cacheNullValue(key);
+          }
+        }
+      }
+      
+      const responseTime = Date.now() - startTime;
+      logger.debug('Batch get with protection completed', {
+        totalKeys: keys.length,
+        cacheHits: keys.length - missedKeys.length,
+        missedKeys: missedKeys.length,
+        responseTime
+      });
+      
+      return results;
+      
+    } catch (error) {
+      logger.error('Batch get with protection failed', { keys: keys.length, error });
+      
+      // 返回空结果
+      keys.forEach(key => results.set(key, null));
+      return results;
+    }
+  }
+
+  /**
+   * 异步刷新缓存
+   */
+  async refreshCacheAsync<T>(
+    key: string,
+    fetchFunction: () => Promise<T>,
+    ttl = 300,
+    priority = 1
+  ): Promise<void> {
+    const task: RefreshTask = {
+      key,
+      fetchFunction,
+      priority,
+      ttl,
+      scheduled: false,
+      retryCount: 0
+    };
+    
+    this.refreshQueue.set(key, task);
+    
+    // 立即处理高优先级任务
+    if (priority >= 3) {
+      await this.processRefreshTask(task);
+    }
+    
+    logger.debug('Cache refresh scheduled', { key, priority });
+  }
+
+  /**
+   * 清理过期和低频数据
+   */
+  async cleanup(): Promise<{
+    expiredKeys: number;
+    lowFrequencyKeys: number;
+    memoryFreed: number;
+  }> {
+    const startTime = Date.now();
+    let expiredKeys = 0;
+    let lowFrequencyKeys = 0;
+    let memoryFreed = 0;
+    
+    try {
+      // 获取所有缓存键
+      const keys = await this.redis.keys('cache:optimized:*');
+      
+      for (const key of keys) {
+        try {
+          const ttl = await this.redis.ttl(key);
+          
+          // 清理过期键
+          if (ttl === -2 || ttl === 0) {
+            await this.redis.delete(key);
+            expiredKeys++;
+            continue;
+          }
+          
+          // 分析低频访问键
+          const data = await this.redis.get(key);
+          if (data) {
+            const item = JSON.parse(data);
+            const age = Date.now() - item.metadata.timestamp;
+            
+            // 超过24小时且访问次数少的数据
+            if (age > 24 * 60 * 60 * 1000) {
+              const accessCount = await this.redis.get(`access:${key}`) || '0';
+              
+              if (parseInt(accessCount) < 5) { // 访问次数少于5次
+                memoryFreed += item.metadata.originalSize || 0;
+                await this.redis.delete(key);
+                await this.redis.delete(`access:${key}`);
+                lowFrequencyKeys++;
+              }
+            }
+          }
+        } catch (error) {
+          logger.warn('Cleanup item failed', { key, error });
+        }
+      }
+      
+      const duration = Date.now() - startTime;
+      const result = { expiredKeys, lowFrequencyKeys, memoryFreed };
+      
+      logger.info('Cache cleanup completed', { ...result, duration });
+      
+      return result;
+      
+    } catch (error) {
+      logger.error('Cache cleanup failed', error);
+      return { expiredKeys: 0, lowFrequencyKeys: 0, memoryFreed: 0 };
+    }
+  }
+
+  /**
+   * 获取性能指标
+   */
+  getPerformanceMetrics(): PerformanceMetrics {
+    const now = Date.now();
+    const elapsed = (now - this.performanceCounter.startTime) / 1000; // 秒
+    
+    const hitRate = this.performanceCounter.requests > 0 
+      ? (this.performanceCounter.hits / this.performanceCounter.requests) * 100 
+      : 0;
+    
+    const avgResponseTime = this.performanceCounter.requests > 0
+      ? this.performanceCounter.totalResponseTime / this.performanceCounter.requests
+      : 0;
+    
+    const throughput = elapsed > 0 ? this.performanceCounter.requests / elapsed : 0;
+    
+    const errorRate = this.performanceCounter.requests > 0
+      ? (this.performanceCounter.errors / this.performanceCounter.requests) * 100
+      : 0;
+    
+    return {
+      ...this.metrics,
+      cacheHitRate: Math.round(hitRate * 100) / 100,
+      avgResponseTime: Math.round(avgResponseTime * 100) / 100,
+      throughput: Math.round(throughput * 100) / 100,
+      errorRate: Math.round(errorRate * 100) / 100
+    };
+  }
+
+  /**
+   * 重置性能计数器
+   */
+  resetMetrics(): void {
+    this.performanceCounter = {
+      requests: 0,
+      hits: 0,
+      errors: 0,
+      totalResponseTime: 0,
+      startTime: Date.now()
+    };
+    
+    this.metrics = {
+      cacheHitRate: 0,
+      avgResponseTime: 0,
+      throughput: 0,
+      errorRate: 0,
+      memoryUsage: 0,
+      compressionRatio: 0,
+      refreshAheadCount: 0,
+      circuitBreakerTrips: 0
+    };
+    
+    logger.info('Performance metrics reset');
+  }
+
+  // ==================== 私有方法 ====================
+
+  /**
+   * 从缓存获取数据
+   */
+  private async getFromCache<T>(key: string): Promise<T | null> {
+    try {
+      const cached = await this.redis.get(`cache:optimized:${key}`);
+      
+      if (!cached) {
+        return null;
+      }
+      
+      const item = JSON.parse(cached);
+      let data = item.data;
+      
+      // 解压缩
+      if (item.metadata.compressed) {
+        const buffer = Buffer.from(data, 'base64');
+        const decompressed = await gunzip(buffer);
+        data = decompressed.toString();
+      }
+      
+      // 反序列化
+      return this.optimizedDeserialize<T>(data);
+      
+    } catch (error) {
+      logger.error('Get from cache failed', { key, error });
+      return null;
+    }
+  }
+
+  /**
+   * 批量从缓存获取
+   */
+  private async batchGetFromCache<T>(keys: string[]): Promise<Map<string, T | null>> {
+    const results = new Map<string, T | null>();
+    
+    try {
+      const cacheKeys = keys.map(key => `cache:optimized:${key}`);
+      const values = await this.redis.mget(cacheKeys);
+      
+      for (let i = 0; i < keys.length; i++) {
+        const key = keys[i];
+        const value = values[i];
+        
+        if (value) {
+          try {
+            const item = JSON.parse(value);
+            let data = item.data;
+            
+            if (item.metadata.compressed) {
+              const buffer = Buffer.from(data, 'base64');
+              const decompressed = await gunzip(buffer);
+              data = decompressed.toString();
+            }
+            
+            results.set(key, this.optimizedDeserialize<T>(data));
+          } catch (error) {
+            logger.warn('Batch get item parse failed', { key, error });
+            results.set(key, null);
+          }
+        } else {
+          results.set(key, null);
+        }
+      }
+      
+    } catch (error) {
+      logger.error('Batch get from cache failed', error);
+      keys.forEach(key => results.set(key, null));
+    }
+    
+    return results;
+  }
+
+  /**
+   * 批量获取和缓存
+   */
+  private async batchFetchAndCache<T>(
+    keys: string[],
+    fetchFunctions: Map<string, () => Promise<T>>,
+    ttl: number,
+    results: Map<string, T | null>
+  ): Promise<void> {
+    const promises = keys.map(async (key) => {
+      const fetchFn = fetchFunctions.get(key);
+      if (!fetchFn) {
+        return { key, data: null, error: null };
+      }
+      
+      try {
+        const data = await fetchFn();
+        await this.setWithOptimization(key, data, ttl);
+        return { key, data, error: null };
+      } catch (error) {
+        return { key, data: null, error };
+      }
+    });
+    
+    const settled = await Promise.allSettled(promises);
+    
+    settled.forEach((result, index) => {
+      const key = keys[index];
+      if (result.status === 'fulfilled') {
+        const { data, error } = result.value;
+        if (error) {
+          this.recordFailure(key, error);
+        } else {
+          results.set(key, data);
+        }
+      } else {
+        this.recordFailure(key, result.reason);
+        results.set(key, null);
+      }
+    });
+  }
+
+  /**
+   * 使用互斥锁获取缓存
+   */
+  private async getWithMutex<T>(
+    key: string,
+    fetchFunction: () => Promise<T>,
+    ttl: number
+  ): Promise<T | null> {
+    let mutex = this.mutexMap.get(key);
+    
+    if (!mutex) {
+      mutex = new Semaphore(1);
+      this.mutexMap.set(key, mutex);
+    }
+    
+    const acquired = await mutex.acquire(this.config.mutexTimeout);
+    
+    if (!acquired) {
+      logger.warn('Mutex timeout', { key, timeout: this.config.mutexTimeout });
+      return null;
+    }
+    
+    try {
+      // 再次检查缓存
+      const cached = await this.getFromCache<T>(key);
+      if (cached !== null) {
+        return cached;
+      }
+      
+      // 执行回源
+      const data = await fetchFunction();
+      await this.setWithOptimization(key, data, ttl);
+      
+      return data;
+      
+    } finally {
+      mutex.release();
+    }
+  }
+
+  /**
+   * 缓存null值
+   */
+  private async cacheNullValue(key: string): Promise<void> {
+    try {
+      await this.redis.set(
+        `cache:null:${key}`,
+        'null',
+        this.config.nullCacheTtl
+      );
+    } catch (error) {
+      logger.error('Cache null value failed', { key, error });
+    }
+  }
+
+  /**
+   * 安排刷新缓存
+   */
+  private async scheduleRefreshAhead<T>(
+    key: string,
+    fetchFunction: () => Promise<T>,
+    ttl: number
+  ): Promise<void> {
+    const remaining = await this.redis.ttl(`cache:optimized:${key}`);
+    const threshold = ttl * this.config.refreshThreshold;
+    
+    if (remaining > 0 && remaining < threshold) {
+      await this.refreshCacheAsync(key, fetchFunction, ttl, 2);
+      this.metrics.refreshAheadCount++;
+    }
+  }
+
+  /**
+   * 处理刷新任务
+   */
+  private async processRefreshTask(task: RefreshTask): Promise<void> {
+    try {
+      const data = await task.fetchFunction();
+      await this.setWithOptimization(task.key, data, task.ttl);
+      
+      this.refreshQueue.delete(task.key);
+      logger.debug('Cache refresh task completed', { key: task.key });
+      
+    } catch (error) {
+      task.retryCount++;
+      
+      if (task.retryCount < 3) {
+        // 重试
+        setTimeout(() => {
+          this.processRefreshTask(task);
+        }, 1000 * task.retryCount);
+      } else {
+        this.refreshQueue.delete(task.key);
+        logger.error('Cache refresh task failed after retries', { key: task.key, error });
+      }
+    }
+  }
+
+  /**
+   * 检查熔断器状态
+   */
+  private isCircuitBreakerClosed(key: string): boolean {
+    if (!this.config.circuitBreakerEnabled) {
+      return true;
+    }
+    
+    const keyPattern = this.extractKeyPattern(key);
+    const breaker = this.circuitBreakers.get(keyPattern);
+    
+    if (!breaker) {
+      return true;
+    }
+    
+    const now = Date.now();
+    
+    switch (breaker.state) {
+      case 'CLOSED':
+        return true;
+        
+      case 'OPEN':
+        // 检查是否可以转为半开状态
+        if (now - breaker.lastFailTime > 60000) { // 1分钟后尝试半开
+          breaker.state = 'HALF_OPEN';
+          breaker.halfOpenTests = 0;
+          return true;
+        }
+        return false;
+        
+      case 'HALF_OPEN':
+        return breaker.halfOpenTests < 3;
+        
+      default:
+        return true;
+    }
+  }
+
+  /**
+   * 记录成功
+   */
+  private recordSuccess(key: string, responseTime: number): void {
+    this.performanceCounter.totalResponseTime += responseTime;
+    
+    // 重置熔断器
+    const keyPattern = this.extractKeyPattern(key);
+    const breaker = this.circuitBreakers.get(keyPattern);
+    
+    if (breaker && breaker.state === 'HALF_OPEN') {
+      breaker.halfOpenTests++;
+      if (breaker.halfOpenTests >= 3) {
+        breaker.state = 'CLOSED';
+        breaker.failures = 0;
+      }
+    }
+  }
+
+  /**
+   * 记录失败
+   */
+  private recordFailure(key: string, error: any): void {
+    const keyPattern = this.extractKeyPattern(key);
+    let breaker = this.circuitBreakers.get(keyPattern);
+    
+    if (!breaker) {
+      breaker = {
+        state: 'CLOSED',
+        failures: 0,
+        lastFailTime: 0,
+        halfOpenTests: 0
+      };
+      this.circuitBreakers.set(keyPattern, breaker);
+    }
+    
+    breaker.failures++;
+    breaker.lastFailTime = Date.now();
+    
+    // 失败次数达到阈值，打开熔断器
+    if (breaker.failures >= 5 && breaker.state === 'CLOSED') {
+      breaker.state = 'OPEN';
+      this.metrics.circuitBreakerTrips++;
+      logger.warn('Circuit breaker opened', { keyPattern, failures: breaker.failures });
+    }
+  }
+
+  /**
+   * 提取键模式
+   */
+  private extractKeyPattern(key: string): string {
+    const parts = key.split(':');
+    return parts.length > 1 ? parts[0] : 'default';
+  }
+
+  /**
+   * 优化序列化
+   */
+  private optimizedSerialize(data: any): string {
+    if (!this.config.serializationOptimized) {
+      return JSON.stringify(data);
+    }
+    
+    // 简化的序列化优化
+    if (typeof data === 'string') {
+      return data;
+    }
+    
+    if (typeof data === 'number' || typeof data === 'boolean') {
+      return String(data);
+    }
+    
+    return JSON.stringify(data);
+  }
+
+  /**
+   * 优化反序列化
+   */
+  private optimizedDeserialize<T>(data: string): T {
+    if (!this.config.serializationOptimized) {
+      return JSON.parse(data);
+    }
+    
+    // 尝试直接返回
+    try {
+      return JSON.parse(data);
+    } catch {
+      return data as any;
+    }
+  }
+
+  /**
+   * 更新压缩统计
+   */
+  private updateCompressionStats(originalSize: number, compressedSize: number): void {
+    const ratio = compressedSize / originalSize;
+    this.metrics.compressionRatio = (this.metrics.compressionRatio + ratio) / 2;
+  }
+
+  /**
+   * 设置标签索引
+   */
+  private async setTagIndex(tags: string[], key: string): Promise<void> {
+    try {
+      for (const tag of tags) {
+        const tagKey = `tag:optimized:${tag}`;
+        await this.redis.sadd(tagKey, key);
+        await this.redis.expire(tagKey, 86400); // 24小时
+      }
+    } catch (error) {
+      logger.error('Set tag index failed', { tags, key, error });
+    }
+  }
+
+  /**
+   * 启动后台任务
+   */
+  private startBackgroundTasks(): void {
+    // 刷新任务处理器
+    setInterval(async () => {
+      const tasks = Array.from(this.refreshQueue.values())
+        .filter(task => !task.scheduled)
+        .sort((a, b) => b.priority - a.priority)
+        .slice(0, 5); // 每次处理5个任务
+      
+      for (const task of tasks) {
+        task.scheduled = true;
+        this.processRefreshTask(task);
+      }
+    }, 5000);
+    
+    // 定期清理
+    setInterval(() => {
+      this.cleanup();
+    }, 30 * 60 * 1000); // 每30分钟清理一次
+    
+    // 指标更新
+    setInterval(() => {
+      this.updateMemoryUsage();
+    }, 60000); // 每分钟更新一次内存使用情况
+  }
+
+  /**
+   * 更新内存使用情况
+   */
+  private async updateMemoryUsage(): Promise<void> {
+    try {
+      const info = await this.redis.info('memory');
+      const usedMemoryMatch = info.match(/used_memory:(\d+)/);
+      
+      if (usedMemoryMatch) {
+        this.metrics.memoryUsage = parseInt(usedMemoryMatch[1]);
+      }
+    } catch (error) {
+      logger.error('Update memory usage failed', error);
+    }
+  }
+}
+
+// 导出单例实例
+export default new CachePerformanceOptimizer();

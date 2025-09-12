@@ -1,0 +1,61 @@
+# Multi-stage build for Node.js backend
+FROM node:18-alpine as build-stage
+
+# Install security updates and build dependencies
+RUN apk update && apk upgrade && \
+    apk add --no-cache python3 make g++ dumb-init
+
+# Set working directory
+WORKDIR /app
+
+# Copy package files
+COPY backend/package*.json ./
+
+# Install dependencies
+RUN npm ci --only=production && npm cache clean --force
+
+# Copy source code
+COPY backend/ .
+
+# Build TypeScript
+RUN npm run build
+
+# Production stage
+FROM node:18-alpine as production-stage
+
+# Install security updates
+RUN apk update && apk upgrade && \
+    apk add --no-cache dumb-init curl
+
+# Create non-root user
+RUN addgroup -g 1001 -S app && \
+    adduser -S -D -H -u 1001 -h /home/app -s /sbin/nologin -G app -g app app
+
+# Set working directory
+WORKDIR /app
+
+# Copy package files and install production dependencies only
+COPY --from=build-stage /app/package*.json ./
+RUN npm ci --only=production && npm cache clean --force
+
+# Copy built application and source files needed for runtime
+COPY --from=build-stage /app/dist ./dist
+COPY --from=build-stage /app/src ./src
+
+# Create necessary directories
+RUN mkdir -p /app/logs /app/uploads /app/temp && \
+    chown -R app:app /app
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:3001/health || exit 1
+
+# Switch to non-root user
+USER app
+
+# Expose port
+EXPOSE 3001
+
+# Use dumb-init for proper signal handling
+ENTRYPOINT ["/usr/bin/dumb-init", "--"]
+CMD ["npm", "start"]

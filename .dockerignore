@@ -1,0 +1,186 @@
+# Email Assist - Docker ignore file
+
+# Dependencies
+node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Logs
+logs
+*.log
+
+# Coverage directory used by tools like istanbul
+coverage
+*.lcov
+
+# nyc test coverage
+.nyc_output
+
+# Grunt intermediate storage
+.grunt
+
+# Bower dependency directory
+bower_components
+
+# node-waf configuration
+.lock-wscript
+
+# Compiled binary addons
+build/Release
+
+# Dependency directories
+jspm_packages/
+
+# TypeScript v1 declaration files
+typings/
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# Optional REPL history
+.node_repl_history
+
+# Output of 'npm pack'
+*.tgz
+
+# Yarn Integrity file
+.yarn-integrity
+
+# Environment files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Next.js build output
+.next
+
+# Nuxt.js build / generate output
+.nuxt
+dist
+
+# Storybook build outputs
+.out
+.storybook-out
+
+# vuepress build output
+.vuepress/dist
+
+# Serverless directories
+.serverless/
+
+# FuseBox cache
+.fusebox/
+
+# DynamoDB Local files
+.dynamodb/
+
+# TernJS port file
+.tern-port
+
+# VS Code
+.vscode/
+
+# IDE files
+.idea/
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Build directories
+build/
+dist/
+out/
+
+# Test directories
+test-reports/
+test-data/
+test-config/
+test-docs/
+tests/
+
+# Temporary files
+temp/
+tmp/
+*.tmp
+*.temp
+
+# Documentation files
+*.md
+!README.md
+!DOCKER.md
+
+# Docker files (except Dockerfiles)
+docker-compose.override.yml
+.docker/
+
+# SSL certificates
+ssl/
+*.pem
+*.key
+*.crt
+
+# Backup files
+*.bak
+*.backup
+
+# Local development files
+.env.local
+.env.development
+.env.test
+.env.production
+
+# Package lock files (we want to use the one in the container)
+package-lock.json
+yarn.lock
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+.circleci/
+
+# Monitoring and logs
+logs/
+*.log
+monitoring/
+
+# Uploads and user data
+uploads/
+user-data/
+
+# Cache directories
+.cache/
+.parcel-cache/
+.next/
+
+# Storybook
+.storybook/
+storybook-static/

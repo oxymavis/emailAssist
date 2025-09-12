@@ -55,9 +55,24 @@ class DatabaseManager {
       user: dbConfig.username,
       password: dbConfig.password,
       ssl: dbConfig.ssl ? { rejectUnauthorized: false } : false,
-      max: 20, // Maximum number of clients in the pool
-      idleTimeoutMillis: 30000, // Close idle clients after 30 seconds
-      connectionTimeoutMillis: 2000, // Return an error after 2 seconds if connection could not be established
+      
+      // 优化的连接池配置
+      max: parseInt(process.env.DB_POOL_MAX || '30'), // 最大连接数，根据负载调整
+      min: parseInt(process.env.DB_POOL_MIN || '5'),  // 最小连接数，保持基础连接
+      
+      // 连接超时配置
+      connectionTimeoutMillis: parseInt(process.env.DB_CONNECT_TIMEOUT || '5000'), // 连接超时5秒
+      idleTimeoutMillis: parseInt(process.env.DB_IDLE_TIMEOUT || '60000'), // 空闲超时1分钟
+      
+      // 查询超时配置
+      query_timeout: parseInt(process.env.DB_QUERY_TIMEOUT || '30000'), // 查询超时30秒
+      statement_timeout: parseInt(process.env.DB_STATEMENT_TIMEOUT || '60000'), // 语句超时1分钟
+      
+      // 连接验证
+      allowExitOnIdle: true, // 允许在空闲时退出
+      
+      // 应用程序名称，便于监控
+      application_name: process.env.APP_NAME || 'email-assist'
     });
 
     // Test the connection

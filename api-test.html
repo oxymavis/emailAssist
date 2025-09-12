@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>前后端API联调测试</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .test-container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .test-result {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+        .success {
+            background-color: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        .error {
+            background-color: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+        .loading {
+            background-color: #d1ecf1;
+            border: 1px solid #bee5eb;
+            color: #0c5460;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
+        pre {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            overflow-x: auto;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .endpoint-info {
+            background-color: #e9ecef;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>📡 Email Assist - 前后端API联调测试</h1>
+    
+    <div class="test-container">
+        <h2>🔧 服务状态检查</h2>
+        <p class="endpoint-info">
+            <strong>前端服务:</strong> http://localhost:3000 <span id="frontend-status">⏳ 检查中...</span><br>
+            <strong>后端服务:</strong> http://localhost:3001 <span id="backend-status">⏳ 检查中...</span>
+        </p>
+        <button onclick="checkServices()">重新检查服务状态</button>
+        <div id="service-result"></div>
+    </div>
+
+    <div class="test-container">
+        <h2>🏥 API健康检查</h2>
+        <button onclick="testHealthCheck()">测试健康检查</button>
+        <div id="health-result"></div>
+    </div>
+
+    <div class="test-container">
+        <h2>📧 邮件API测试</h2>
+        <button onclick="testEmailsAPI()">获取邮件列表</button>
+        <button onclick="testSingleEmail()">获取单个邮件</button>
+        <div id="email-result"></div>
+    </div>
+
+    <div class="test-container">
+        <h2>🧠 AI分析API测试</h2>
+        <button onclick="testEmailAnalysis()">单个邮件分析</button>
+        <button onclick="testBatchAnalysis()">批量邮件分析</button>
+        <div id="analysis-result"></div>
+    </div>
+
+    <div class="test-container">
+        <h2>📊 统计数据API测试</h2>
+        <button onclick="testDashboardStats()">获取仪表板统计</button>
+        <div id="stats-result"></div>
+    </div>
+
+    <div class="test-container">
+        <h2>⚙️ 其他API测试</h2>
+        <button onclick="testFiltersAPI()">获取过滤规则</button>
+        <button onclick="testReportsAPI()">获取报告列表</button>
+        <button onclick="testWorkflowsAPI()">获取工作流</button>
+        <div id="other-result"></div>
+    </div>
+
+    <script>
+        const API_BASE_URL = 'http://localhost:3001/api';
+
+        // 辅助函数
+        function showResult(elementId, content, type = 'success') {
+            const element = document.getElementById(elementId);
+            element.innerHTML = `<div class="test-result ${type}">${content}</div>`;
+        }
+
+        function showLoading(elementId, message = '正在测试...') {
+            showResult(elementId, message, 'loading');
+        }
+
+        async function makeAPICall(endpoint, options = {}) {
+            const url = `${API_BASE_URL}${endpoint}`;
+            try {
+                const response = await fetch(url, {
+                    ...options,
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...options.headers
+                    }
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                return await response.json();
+            } catch (error) {
+                console.error('API调用失败:', error);
+                throw error;
+            }
+        }
+
+        // 检查服务状态
+        async function checkServices() {
+            // 检查前端
+            try {
+                await fetch('http://localhost:3000');
+                document.getElementById('frontend-status').innerHTML = '✅ 运行正常';
+            } catch (error) {
+                document.getElementById('frontend-status').innerHTML = '❌ 连接失败';
+            }
+
+            // 检查后端
+            try {
+                await fetch(`${API_BASE_URL}/health`);
+                document.getElementById('backend-status').innerHTML = '✅ 运行正常';
+            } catch (error) {
+                document.getElementById('backend-status').innerHTML = '❌ 连接失败';
+            }
+        }
+
+        // 健康检查测试
+        async function testHealthCheck() {
+            showLoading('health-result');
+            try {
+                const result = await makeAPICall('/health');
+                showResult('health-result', 
+                    `<strong>✅ 健康检查通过</strong><br>
+                    状态: ${result.data.status}<br>
+                    运行时间: ${Math.floor(result.data.uptime)}秒<br>
+                    <details>
+                        <summary>完整响应</summary>
+                        <pre>${JSON.stringify(result, null, 2)}</pre>
+                    </details>`
+                );
+            } catch (error) {
+                showResult('health-result', `❌ 健康检查失败: ${error.message}`, 'error');
+            }
+        }
+
+        // 邮件API测试
+        async function testEmailsAPI() {
+            showLoading('email-result');
+            try {
+                const result = await makeAPICall('/emails');
+                showResult('email-result', 
+                    `<strong>✅ 邮件列表获取成功</strong><br>
+                    邮件数量: ${result.data.emails.length}<br>
+                    分页信息: ${result.data.pagination.total} 总数, 第 ${result.data.pagination.page} 页<br>
+                    <details>
+                        <summary>邮件列表</summary>
+                        <pre>${JSON.stringify(result.data.emails, null, 2)}</pre>
+                    </details>`
+                );
+            } catch (error) {
+                showResult('email-result', `❌ 邮件API测试失败: ${error.message}`, 'error');
+            }
+        }
+
+        async function testSingleEmail() {
+            showLoading('email-result');
+            try {
+                const result = await makeAPICall('/emails/test-email-123');
+                showResult('email-result', 
+                    `<strong>✅ 单个邮件获取成功</strong><br>
+                    邮件ID: ${result.data.id}<br>
+                    主题: ${result.data.subject}<br>
+                    发件人: ${result.data.from}<br>
+                    <details>
+                        <summary>邮件详情</summary>
+                        <pre>${JSON.stringify(result.data, null, 2)}</pre>
+                    </details>`
+                );
+            } catch (error) {
+                showResult('email-result', `❌ 单个邮件获取失败: ${error.message}`, 'error');
+            }
+        }
+
+        // AI分析测试
+        async function testEmailAnalysis() {
+            showLoading('analysis-result');
+            try {
+                const result = await makeAPICall('/analysis/email/test-123', {
+                    method: 'POST'
+                });
+                showResult('analysis-result', 
+                    `<strong>✅ 邮件分析成功</strong><br>
+                    邮件ID: ${result.data.emailId}<br>
+                    情感: ${result.data.analysis.sentiment}<br>
+                    类别: ${result.data.analysis.category}<br>
+                    置信度: ${result.data.analysis.confidence}<br>
+                    <details>
+                        <summary>完整分析结果</summary>
+                        <pre>${JSON.stringify(result.data.analysis, null, 2)}</pre>
+                    </details>`
+                );
+            } catch (error) {
+                showResult('analysis-result', `❌ 邮件分析失败: ${error.message}`, 'error');
+            }
+        }
+
+        async function testBatchAnalysis() {
+            showLoading('analysis-result');
+            try {
+                const result = await makeAPICall('/analysis/batch', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        emailIds: ['email-1', 'email-2', 'email-3']
+                    })
+                });
+                showResult('analysis-result', 
+                    `<strong>✅ 批量分析成功</strong><br>
+                    处理邮件数: ${result.data.processed}<br>
+                    分析结果数: ${result.data.results.length}<br>
+                    <details>
+                        <summary>分析结果</summary>
+                        <pre>${JSON.stringify(result.data.results, null, 2)}</pre>
+                    </details>`
+                );
+            } catch (error) {
+                showResult('analysis-result', `❌ 批量分析失败: ${error.message}`, 'error');
+            }
+        }
+
+        // 统计数据测试
+        async function testDashboardStats() {
+            showLoading('stats-result');
+            try {
+                const result = await makeAPICall('/stats/dashboard');
+                const data = result.data;
+                showResult('stats-result', 
+                    `<strong>✅ 仪表板数据获取成功</strong><br>
+                    总邮件数: ${data.totalEmails}<br>
+                    未读邮件: ${data.unreadEmails}<br>
+                    今日邮件: ${data.todayEmails}<br>
+                    重要邮件: ${data.importantEmails}<br>
+                    本周趋势: ${data.trends.change}%<br>
+                    <details>
+                        <summary>完整统计数据</summary>
+                        <pre>${JSON.stringify(data, null, 2)}</pre>
+                    </details>`
+                );
+            } catch (error) {
+                showResult('stats-result', `❌ 统计数据获取失败: ${error.message}`, 'error');
+            }
+        }
+
+        // 其他API测试
+        async function testFiltersAPI() {
+            showLoading('other-result');
+            try {
+                const result = await makeAPICall('/filters');
+                showResult('other-result', 
+                    `<strong>✅ 过滤规则获取成功</strong><br>
+                    规则数量: ${result.data.length}<br>
+                    <details>
+                        <summary>过滤规则</summary>
+                        <pre>${JSON.stringify(result.data, null, 2)}</pre>
+                    </details>`
+                );
+            } catch (error) {
+                showResult('other-result', `❌ 过滤规则获取失败: ${error.message}`, 'error');
+            }
+        }
+
+        async function testReportsAPI() {
+            showLoading('other-result');
+            try {
+                const result = await makeAPICall('/reports');
+                showResult('other-result', 
+                    `<strong>✅ 报告列表获取成功</strong><br>
+                    报告数量: ${result.data.length}<br>
+                    <details>
+                        <summary>报告列表</summary>
+                        <pre>${JSON.stringify(result.data, null, 2)}</pre>
+                    </details>`
+                );
+            } catch (error) {
+                showResult('other-result', `❌ 报告列表获取失败: ${error.message}`, 'error');
+            }
+        }
+
+        async function testWorkflowsAPI() {
+            showLoading('other-result');
+            try {
+                const result = await makeAPICall('/workflows');
+                showResult('other-result', 
+                    `<strong>✅ 工作流获取成功</strong><br>
+                    工作流数量: ${result.data.length}<br>
+                    <details>
+                        <summary>工作流列表</summary>
+                        <pre>${JSON.stringify(result.data, null, 2)}</pre>
+                    </details>`
+                );
+            } catch (error) {
+                showResult('other-result', `❌ 工作流获取失败: ${error.message}`, 'error');
+            }
+        }
+
+        // 页面加载时自动检查服务
+        window.addEventListener('load', checkServices);
+    </script>
+</body>
+</html>

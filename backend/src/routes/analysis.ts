@@ -4,87 +4,30 @@
  */
 
 import { Router } from 'express';
-import AnalysisController, {
-  validateAnalyzeEmail,
-  validateBatchAnalyze,
-  validateGetAnalysis,
-  validateReanalyze,
-  validateAnalysisHistory
-} from '@/controllers/AnalysisController';
-import { authenticate } from '@/middleware/auth';
-import { rateLimiter } from '@/middleware';
+import { AnalysisController } from '@/controllers/AnalysisController';
 
 const router = Router();
+const analysisController = new AnalysisController();
 
-// 所有分析路由都需要认证
-router.use(authenticate);
+// 基础测试路由
+router.get('/test', (req, res) => {
+  res.json({
+    success: true,
+    message: 'Analysis routes are working!',
+    timestamp: new Date().toISOString()
+  });
+});
 
-/**
- * @route POST /api/v1/emails/:id/analyze
- * @desc 分析单个邮件
- * @access Private
- */
-router.post(
-  '/emails/:id/analyze',
-  rateLimiter({ maxRequests: 20, windowMs: 60 * 1000 }), // 限制每分钟20次
-  validateAnalyzeEmail,
-  AnalysisController.analyzeEmail
-);
+// 分析单个邮件
+router.post('/emails/:id/analyze', analysisController.analyzeEmail.bind(analysisController));
 
-/**
- * @route POST /api/v1/emails/batch-analyze
- * @desc 批量分析邮件
- * @access Private
- */
-router.post(
-  '/emails/batch-analyze',
-  rateLimiter({ maxRequests: 5, windowMs: 60 * 1000 }), // 限制每分钟5次
-  validateBatchAnalyze,
-  AnalysisController.batchAnalyzeEmails
-);
+// 批量分析邮件
+router.post('/analyze/batch', analysisController.batchAnalyze.bind(analysisController));
 
-/**
- * @route GET /api/v1/emails/:id/analysis
- * @desc 获取邮件分析结果
- * @access Private
- */
-router.get(
-  '/emails/:id/analysis',
-  validateGetAnalysis,
-  AnalysisController.getEmailAnalysis
-);
+// 获取分析状态
+router.get('/analyze/status', analysisController.getAnalysisStatus.bind(analysisController));
 
-/**
- * @route POST /api/v1/emails/:id/reanalyze
- * @desc 重新分析邮件
- * @access Private
- */
-router.post(
-  '/emails/:id/reanalyze',
-  rateLimiter({ maxRequests: 10, windowMs: 60 * 1000 }), // 限制每分钟10次
-  validateReanalyze,
-  AnalysisController.reanalyzeEmail
-);
-
-/**
- * @route GET /api/v1/analysis/stats
- * @desc 获取分析统计信息
- * @access Private
- */
-router.get(
-  '/analysis/stats',
-  AnalysisController.getAnalysisStats
-);
-
-/**
- * @route GET /api/v1/analysis/history
- * @desc 获取分析历史记录
- * @access Private
- */
-router.get(
-  '/analysis/history',
-  validateAnalysisHistory,
-  AnalysisController.getAnalysisHistory
-);
+// 获取分析历史
+router.get('/analyze/history', analysisController.getAnalysisHistory.bind(analysisController));
 
 export default router;

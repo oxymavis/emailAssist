@@ -49,6 +49,19 @@ class Config {
       MICROSOFT_REDIRECT_URI: process.env.MICROSOFT_REDIRECT_URI || 'http://localhost:3001/api/auth/microsoft/callback',
       MICROSOFT_GRAPH_SCOPE: process.env.MICROSOFT_GRAPH_SCOPE || 'openid profile email offline_access https://graph.microsoft.com/Mail.Read https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/User.Read',
       
+      // Google Gmail API
+      GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID || '',
+      GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET || '',
+      GOOGLE_REDIRECT_URI: process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3001/api/auth/google/callback',
+      GOOGLE_GMAIL_SCOPE: process.env.GOOGLE_GMAIL_SCOPE || 'openid profile email https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send',
+      
+      // Email Service Settings
+      EMAIL_SYNC_INTERVAL: parseInt(process.env.EMAIL_SYNC_INTERVAL || '300000', 10), // 5 minutes
+      EMAIL_BATCH_SIZE: parseInt(process.env.EMAIL_BATCH_SIZE || '100', 10),
+      EMAIL_SYNC_TIMEOUT: parseInt(process.env.EMAIL_SYNC_TIMEOUT || '30000', 10), // 30 seconds
+      EMAIL_WEBHOOK_SECRET: process.env.EMAIL_WEBHOOK_SECRET || 'your_webhook_secret_key_for_development',
+      EMAIL_ENCRYPTION_KEY: process.env.EMAIL_ENCRYPTION_KEY || 'your_encryption_key_32_chars_long',
+      
       // CORS
       CORS_ORIGIN: process.env.CORS_ORIGIN || 'http://localhost:5173,http://localhost:3000',
       

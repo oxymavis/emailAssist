@@ -78,6 +78,7 @@ export class ReportSchedulesController {
         name: req.body.name,
         cron_expression: req.body.cron_expression,
         timezone: req.body.timezone || 'Asia/Shanghai',
+        parameters: req.body.parameters || {},
         notification_settings: {
           email_enabled: req.body.notification_settings?.email_enabled || false,
           email_recipients: req.body.notification_settings?.email_recipients || [],

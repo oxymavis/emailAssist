@@ -1,0 +1,107 @@
+# Email Assist - Test Environment Docker Compose Configuration
+version: '3.8'
+
+networks:
+  email-assist-test:
+    driver: bridge
+
+volumes:
+  postgres_test_data:
+    driver: local
+  redis_test_data:
+    driver: local
+
+services:
+  # Test Database
+  postgres-test:
+    image: postgres:15-alpine
+    container_name: email-assist-postgres-test
+    environment:
+      POSTGRES_DB: email_assist_test
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: test_password
+    volumes:
+      - postgres_test_data:/var/lib/postgresql/data
+      - ./docker/postgres/init-test.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - email-assist-test
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d email_assist_test"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Test Cache
+  redis-test:
+    image: redis:7-alpine
+    container_name: email-assist-redis-test
+    command: redis-server --requirepass test_password
+    volumes:
+      - redis_test_data:/data
+    networks:
+      - email-assist-test
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Test Backend
+  backend-test:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: email-assist-backend-test
+    environment:
+      NODE_ENV: test
+      PORT: 3001
+      DATABASE_URL: postgresql://postgres:test_password@postgres-test:5432/email_assist_test
+      REDIS_URL: redis://:test_password@redis-test:6379
+      JWT_SECRET: test_jwt_secret_key_for_testing
+      OPENAI_API_KEY: test_openai_key
+    networks:
+      - email-assist-test
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy
+    command: ["npm", "run", "test:wait"]
+
+  # Test Frontend
+  frontend-test:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: email-assist-frontend-test
+    environment:
+      VITE_API_BASE_URL: http://backend-test:3001/api
+      NODE_ENV: test
+    networks:
+      - email-assist-test
+    depends_on:
+      - backend-test
+    command: ["npm", "run", "test:ci"]
+
+  # Test Monitoring
+  test-runner:
+    image: node:18-alpine
+    container_name: email-assist-test-runner
+    working_dir: /app
+    volumes:
+      - .:/app
+      - /app/node_modules
+    networks:
+      - email-assist-test
+    depends_on:
+      - backend-test
+      - frontend-test
+    command: |
+      sh -c "
+        echo 'Waiting for services to be ready...'
+        sleep 30
+        echo 'Running integration tests...'
+        npm run test:integration
+        echo 'Running E2E tests...'
+        npm run test:e2e
+      "

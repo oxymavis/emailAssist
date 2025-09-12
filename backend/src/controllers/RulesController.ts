@@ -600,6 +600,498 @@ export class RulesController {
       next(error);
     }
   }
+
+  /**
+   * 获取规则性能分析
+   * GET /api/v1/rules/performance-analysis
+   */
+  static async getRulePerformanceAnalysis(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const userId = req.user!.id;
+      const timeframe = req.query.timeframe as string || '7d';
+      const includeInactive = req.query.includeInactive === 'true';
+
+      // 验证时间范围
+      const validTimeframes = ['1d', '7d', '30d', '90d'];
+      if (!validTimeframes.includes(timeframe)) {
+        throw new ValidationError(`Invalid timeframe. Must be one of: ${validTimeframes.join(', ')}`);
+      }
+
+      // 计算时间范围
+      const now = new Date();
+      const timeRanges: { [key: string]: Date } = {
+        '1d': new Date(now.getTime() - 24 * 60 * 60 * 1000),
+        '7d': new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000),
+        '30d': new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000),
+        '90d': new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000)
+      };
+
+      const fromDate = timeRanges[timeframe];
+
+      // 获取用户所有规则
+      const { rules } = await FilterRuleModel.list(userId, { 
+        page: 1, 
+        limit: 1000,
+        active: includeInactive ? undefined : true
+      });
+
+      // 获取每个规则的性能指标
+      const performanceData = await Promise.all(
+        rules.map(async (rule) => {
+          const stats = await RuleExecutionLogModel.getRulePerformanceStats(
+            rule.id, 
+            userId, 
+            fromDate, 
+            now
+          );
+
+          return {
+            ruleId: rule.id,
+            ruleName: rule.name,
+            isActive: rule.isActive,
+            priority: rule.priority,
+            performance: {
+              totalExecutions: stats.totalExecutions,
+              successfulExecutions: stats.successfulExecutions,
+              failedExecutions: stats.failedExecutions,
+              averageExecutionTime: stats.averageExecutionTime,
+              maxExecutionTime: stats.maxExecutionTime,
+              minExecutionTime: stats.minExecutionTime,
+              successRate: stats.totalExecutions > 0 ? 
+                (stats.successfulExecutions / stats.totalExecutions) * 100 : 0,
+              emailsProcessed: stats.emailsProcessed,
+              actionsTriggered: stats.actionsTriggered,
+              lastExecution: stats.lastExecution
+            },
+            trends: {
+              executionsPerDay: stats.executionsPerDay,
+              successRateByDay: stats.successRateByDay,
+              averageProcessingTimeByDay: stats.averageProcessingTimeByDay
+            },
+            issues: {
+              slowExecutions: stats.slowExecutions,
+              recentErrors: stats.recentErrors,
+              conflictingRules: stats.conflictingRules
+            }
+          };
+        })
+      );
+
+      // 计算总体性能指标
+      const overallStats = {
+        totalRules: rules.length,
+        activeRules: rules.filter(r => r.isActive).length,
+        inactiveRules: rules.filter(r => !r.isActive).length,
+        totalExecutions: performanceData.reduce((sum, p) => sum + p.performance.totalExecutions, 0),
+        averageSuccessRate: performanceData.length > 0 ? 
+          performanceData.reduce((sum, p) => sum + p.performance.successRate, 0) / performanceData.length : 0,
+        mostActiveRule: performanceData.reduce((max, current) => 
+          current.performance.totalExecutions > max.performance.totalExecutions ? current : max,
+          performanceData[0] || null
+        ),
+        slowestRule: performanceData.reduce((max, current) => 
+          current.performance.averageExecutionTime > max.performance.averageExecutionTime ? current : max,
+          performanceData[0] || null
+        )
+      };
+
+      const analysisResult = {
+        timeframe,
+        period: {
+          from: fromDate.toISOString(),
+          to: now.toISOString()
+        },
+        overallStats,
+        rulePerformance: performanceData.sort((a, b) => 
+          b.performance.totalExecutions - a.performance.totalExecutions
+        ),
+        recommendations: RulesController.generatePerformanceRecommendations(performanceData)
+      };
+
+      res.json(formatSuccessResponse(analysisResult));
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * 批量规则操作
+   * POST /api/v1/rules/batch-operations
+   */
+  static async batchRuleOperations(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        throw new ValidationError('Invalid request data', errors.array());
+      }
+
+      const userId = req.user!.id;
+      const { operation, ruleIds, parameters = {} } = req.body;
+
+      if (!Array.isArray(ruleIds) || ruleIds.length === 0) {
+        throw new ValidationError('ruleIds must be a non-empty array');
+      }
+
+      const validOperations = ['enable', 'disable', 'delete', 'updatePriority', 'duplicateRule', 'moveToCategory'];
+      if (!validOperations.includes(operation)) {
+        throw new ValidationError(`Invalid operation. Must be one of: ${validOperations.join(', ')}`);
+      }
+
+      const results = {
+        operation,
+        totalRequested: ruleIds.length,
+        successful: 0,
+        failed: 0,
+        results: [] as Array<{
+          ruleId: string;
+          success: boolean;
+          error?: string;
+          newRuleId?: string;
+        }>
+      };
+
+      // 执行批量操作
+      for (const ruleId of ruleIds) {
+        try {
+          let success = true;
+          let newRuleId: string | undefined;
+
+          switch (operation) {
+            case 'enable':
+              await FilterRuleModel.updateStatus(ruleId, userId, true);
+              break;
+
+            case 'disable':
+              await FilterRuleModel.updateStatus(ruleId, userId, false);
+              break;
+
+            case 'delete':
+              await FilterRuleModel.delete(ruleId, userId);
+              break;
+
+            case 'updatePriority':
+              if (!parameters.priority || typeof parameters.priority !== 'number') {
+                throw new Error('Priority parameter is required for updatePriority operation');
+              }
+              await FilterRuleModel.updatePriority(ruleId, userId, parameters.priority);
+              break;
+
+            case 'duplicateRule':
+              const originalRule = await FilterRuleModel.findById(ruleId, userId);
+              if (!originalRule) {
+                throw new Error('Rule not found');
+              }
+              
+              const duplicateData: CreateFilterRuleRequest = {
+                name: `${originalRule.name} (Copy)`,
+                description: originalRule.description,
+                isActive: false, // 复制的规则默认为非活动状态
+                logicOperator: originalRule.logicOperator,
+                conditions: originalRule.conditions,
+                actions: originalRule.actions
+              };
+              
+              const newRule = await FilterRuleModel.create(duplicateData, userId);
+              newRuleId = newRule.id;
+              break;
+
+            case 'moveToCategory':
+              if (!parameters.category || typeof parameters.category !== 'string') {
+                throw new Error('Category parameter is required for moveToCategory operation');
+              }
+              await FilterRuleModel.updateCategory(ruleId, userId, parameters.category);
+              break;
+
+            default:
+              throw new Error(`Unsupported operation: ${operation}`);
+          }
+
+          results.results.push({
+            ruleId,
+            success: true,
+            newRuleId
+          });
+          results.successful++;
+
+        } catch (error) {
+          results.results.push({
+            ruleId,
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error'
+          });
+          results.failed++;
+        }
+      }
+
+      // 清除用户规则缓存
+      await RuleEngineService.clearUserRuleCache(userId);
+
+      logger.info('Batch rule operation completed', {
+        userId,
+        operation,
+        totalRequested: results.totalRequested,
+        successful: results.successful,
+        failed: results.failed
+      });
+
+      res.json(formatSuccessResponse(results));
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * 规则健康检查
+   * GET /api/v1/rules/health-check
+   */
+  static async getRuleHealthCheck(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const userId = req.user!.id;
+
+      // 获取所有规则
+      const { rules } = await FilterRuleModel.list(userId, { page: 1, limit: 1000 });
+
+      // 检查规则健康状态
+      const healthChecks = await Promise.all(
+        rules.map(async (rule) => {
+          const issues = [];
+          const warnings = [];
+
+          // 检查规则是否长时间未执行
+          const lastExecution = await RuleExecutionLogModel.getLastExecution(rule.id, userId);
+          if (!lastExecution && rule.isActive) {
+            warnings.push('Rule has never been executed');
+          } else if (lastExecution && rule.isActive) {
+            const daysSinceLastExecution = Math.floor(
+              (Date.now() - lastExecution.getTime()) / (1000 * 60 * 60 * 24)
+            );
+            if (daysSinceLastExecution > 30) {
+              warnings.push(`Rule hasn't been executed for ${daysSinceLastExecution} days`);
+            }
+          }
+
+          // 检查规则条件的有效性
+          const conditionValidation = await RulesController.validateRuleConditions(rule);
+          if (!conditionValidation.isValid) {
+            issues.push(...conditionValidation.errors);
+          }
+
+          // 检查规则冲突
+          const conflicts = await RulesController.detectRuleConflicts(rule, rules);
+          if (conflicts.length > 0) {
+            warnings.push(`Potential conflicts with rules: ${conflicts.map(c => c.name).join(', ')}`);
+          }
+
+          // 检查性能问题
+          const performanceIssues = await RulesController.checkRulePerformance(rule, userId);
+          if (performanceIssues.length > 0) {
+            warnings.push(...performanceIssues);
+          }
+
+          // 计算健康分数 (0-100)
+          let healthScore = 100;
+          healthScore -= issues.length * 20;
+          healthScore -= warnings.length * 10;
+          healthScore = Math.max(0, healthScore);
+
+          // 确定健康状态
+          let healthStatus: 'healthy' | 'warning' | 'critical';
+          if (issues.length > 0) {
+            healthStatus = 'critical';
+          } else if (warnings.length > 0) {
+            healthStatus = 'warning';
+          } else {
+            healthStatus = 'healthy';
+          }
+
+          return {
+            ruleId: rule.id,
+            ruleName: rule.name,
+            isActive: rule.isActive,
+            healthStatus,
+            healthScore,
+            issues,
+            warnings,
+            lastChecked: new Date().toISOString(),
+            recommendations: RulesController.generateRuleRecommendations(rule, issues, warnings)
+          };
+        })
+      );
+
+      // 计算总体健康指标
+      const overallHealth = {
+        totalRules: rules.length,
+        healthyRules: healthChecks.filter(h => h.healthStatus === 'healthy').length,
+        warningRules: healthChecks.filter(h => h.healthStatus === 'warning').length,
+        criticalRules: healthChecks.filter(h => h.healthStatus === 'critical').length,
+        averageHealthScore: healthChecks.length > 0 ? 
+          healthChecks.reduce((sum, h) => sum + h.healthScore, 0) / healthChecks.length : 0,
+        totalIssues: healthChecks.reduce((sum, h) => sum + h.issues.length, 0),
+        totalWarnings: healthChecks.reduce((sum, h) => sum + h.warnings.length, 0)
+      };
+
+      const healthReport = {
+        timestamp: new Date().toISOString(),
+        overallHealth,
+        ruleHealthChecks: healthChecks.sort((a, b) => a.healthScore - b.healthScore),
+        systemRecommendations: RulesController.generateSystemRecommendations(overallHealth, healthChecks)
+      };
+
+      res.json(formatSuccessResponse(healthReport));
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // 辅助方法
+  private static generatePerformanceRecommendations(performanceData: any[]): string[] {
+    const recommendations = [];
+
+    // 检查是否有执行次数过低的规则
+    const inactiveRules = performanceData.filter(p => p.performance.totalExecutions === 0 && p.isActive);
+    if (inactiveRules.length > 0) {
+      recommendations.push(`Consider reviewing ${inactiveRules.length} active rules that haven't been executed`);
+    }
+
+    // 检查是否有执行时间过长的规则
+    const slowRules = performanceData.filter(p => p.performance.averageExecutionTime > 1000);
+    if (slowRules.length > 0) {
+      recommendations.push(`Optimize ${slowRules.length} rules with slow execution times (>1s)`);
+    }
+
+    // 检查是否有成功率低的规则
+    const unreliableRules = performanceData.filter(p => p.performance.successRate < 90 && p.performance.totalExecutions > 10);
+    if (unreliableRules.length > 0) {
+      recommendations.push(`Review ${unreliableRules.length} rules with low success rates (<90%)`);
+    }
+
+    return recommendations;
+  }
+
+  private static async validateRuleConditions(rule: FilterRule): Promise<{ isValid: boolean; errors: string[] }> {
+    const errors = [];
+
+    // 验证条件字段
+    for (const condition of rule.conditions) {
+      if (!condition.field || !condition.operator || condition.value === undefined) {
+        errors.push(`Invalid condition: missing field, operator, or value`);
+      }
+
+      // 检查字段是否有效
+      const validFields = ['sender', 'subject', 'content', 'attachments', 'importance', 'isRead'];
+      if (!validFields.includes(condition.field)) {
+        errors.push(`Invalid condition field: ${condition.field}`);
+      }
+
+      // 检查操作符是否有效
+      const validOperators = ['equals', 'contains', 'startsWith', 'endsWith', 'in', 'notIn', 'greaterThan', 'lessThan'];
+      if (!validOperators.includes(condition.operator)) {
+        errors.push(`Invalid condition operator: ${condition.operator}`);
+      }
+    }
+
+    return {
+      isValid: errors.length === 0,
+      errors
+    };
+  }
+
+  private static async detectRuleConflicts(rule: FilterRule, allRules: FilterRule[]): Promise<FilterRule[]> {
+    const conflicts = [];
+
+    for (const otherRule of allRules) {
+      if (otherRule.id === rule.id || !otherRule.isActive) continue;
+
+      // 简单的冲突检测：如果两个规则的条件相似但动作不同
+      const hasSimilarConditions = RulesController.compareSimilarConditions(rule.conditions, otherRule.conditions);
+      const hasConflictingActions = RulesController.hasConflictingActions(rule.actions, otherRule.actions);
+
+      if (hasSimilarConditions && hasConflictingActions) {
+        conflicts.push(otherRule);
+      }
+    }
+
+    return conflicts;
+  }
+
+  private static compareSimilarConditions(conditions1: any[], conditions2: any[]): boolean {
+    // 简单的相似性检测
+    const fields1 = conditions1.map(c => c.field);
+    const fields2 = conditions2.map(c => c.field);
+    
+    const commonFields = fields1.filter(f => fields2.includes(f));
+    return commonFields.length > 0;
+  }
+
+  private static hasConflictingActions(actions1: any[], actions2: any[]): boolean {
+    // 检查是否有冲突的动作
+    const moveActions1 = actions1.filter(a => a.type === 'move_to_folder');
+    const moveActions2 = actions2.filter(a => a.type === 'move_to_folder');
+
+    if (moveActions1.length > 0 && moveActions2.length > 0) {
+      return moveActions1[0].parameters.folderId !== moveActions2[0].parameters.folderId;
+    }
+
+    return false;
+  }
+
+  private static async checkRulePerformance(rule: FilterRule, userId: string): Promise<string[]> {
+    const issues = [];
+
+    // 获取最近的性能数据
+    const stats = await RuleExecutionLogModel.getRulePerformanceStats(
+      rule.id,
+      userId,
+      new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), // 最近7天
+      new Date()
+    );
+
+    if (stats.averageExecutionTime > 2000) {
+      issues.push(`Slow execution time: ${stats.averageExecutionTime}ms average`);
+    }
+
+    if (stats.totalExecutions > 10 && stats.successfulExecutions / stats.totalExecutions < 0.8) {
+      issues.push(`Low success rate: ${((stats.successfulExecutions / stats.totalExecutions) * 100).toFixed(1)}%`);
+    }
+
+    return issues;
+  }
+
+  private static generateRuleRecommendations(rule: FilterRule, issues: string[], warnings: string[]): string[] {
+    const recommendations = [];
+
+    if (issues.length > 0) {
+      recommendations.push('Address critical issues immediately');
+    }
+
+    if (warnings.length > 0) {
+      recommendations.push('Review and resolve warnings to improve rule reliability');
+    }
+
+    if (!rule.isActive && warnings.length === 0 && issues.length === 0) {
+      recommendations.push('Consider activating this rule as it appears to be healthy');
+    }
+
+    return recommendations;
+  }
+
+  private static generateSystemRecommendations(overallHealth: any, healthChecks: any[]): string[] {
+    const recommendations = [];
+
+    if (overallHealth.criticalRules > 0) {
+      recommendations.push(`Address ${overallHealth.criticalRules} critical rule issues immediately`);
+    }
+
+    if (overallHealth.averageHealthScore < 70) {
+      recommendations.push('Overall rule health is below optimal. Consider reviewing and optimizing rules');
+    }
+
+    if (overallHealth.totalRules > 50) {
+      recommendations.push('Large number of rules detected. Consider consolidating similar rules');
+    }
+
+    return recommendations;
+  }
 }
 
 // 验证器中间件
@@ -715,4 +1207,31 @@ export const importRulesValidation = [
     .optional()
     .isBoolean()
     .withMessage('replaceExisting must be a boolean')
+];
+
+export const performanceAnalysisValidation = [
+  query('timeframe')
+    .optional()
+    .isIn(['1d', '7d', '30d', '90d'])
+    .withMessage('Invalid timeframe. Must be one of: 1d, 7d, 30d, 90d'),
+  query('includeInactive')
+    .optional()
+    .isBoolean()
+    .withMessage('includeInactive must be a boolean')
+];
+
+export const batchOperationsValidation = [
+  body('operation')
+    .isIn(['enable', 'disable', 'delete', 'updatePriority', 'duplicateRule', 'moveToCategory'])
+    .withMessage('Invalid operation. Must be one of: enable, disable, delete, updatePriority, duplicateRule, moveToCategory'),
+  body('ruleIds')
+    .isArray({ min: 1 })
+    .withMessage('ruleIds must be a non-empty array'),
+  body('ruleIds.*')
+    .isUUID()
+    .withMessage('Each rule ID must be a valid UUID'),
+  body('parameters')
+    .optional()
+    .isObject()
+    .withMessage('parameters must be an object')
 ];

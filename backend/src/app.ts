@@ -17,6 +17,10 @@ import {
   corsOptions
 } from '@/middleware';
 import routes, { createRoutes } from '@/routes';
+import { EmailServiceFactory } from './services/email/EmailServiceFactory';
+import { EmailSyncService } from './services/email/EmailSyncService';
+import { EmailServiceMonitor } from './services/monitoring/EmailServiceMonitor';
+import { DatabaseService } from './services/database/DatabaseService';
 
 /**
  * Express application setup
@@ -25,6 +29,10 @@ import routes, { createRoutes } from '@/routes';
 class App {
   public app: express.Application;
   private isInitialized = false;
+  private emailServiceFactory: EmailServiceFactory;
+  private emailSyncService: EmailSyncService;
+  private emailServiceMonitor: EmailServiceMonitor;
+  private databaseService: DatabaseService;
 
   constructor() {
     this.app = express();
@@ -175,6 +183,9 @@ class App {
       // Initialize Redis connection
       await redis.initialize();
 
+      // Initialize email services
+      await this.initializeEmailServices();
+
       // Setup database routes after initialization
       this.setupDatabaseRoutes();
 
@@ -225,6 +236,46 @@ class App {
   }
 
   /**
+   * Initialize email services
+   */
+  private async initializeEmailServices(): Promise<void> {
+    try {
+      logger.info('Initializing email services...');
+
+      // Initialize database service
+      this.databaseService = DatabaseService.getInstance();
+
+      // Initialize email service factory
+      this.emailServiceFactory = EmailServiceFactory.getInstance();
+
+      // Initialize email sync service
+      this.emailSyncService = EmailSyncService.getInstance();
+
+      // Initialize email service monitor
+      this.emailServiceMonitor = EmailServiceMonitor.getInstance();
+
+      // Setup periodic sync for all accounts
+      setInterval(async () => {
+        try {
+          await this.emailSyncService.schedulePeriodicSync();
+        } catch (error) {
+          logger.error('Error in periodic sync:', error);
+        }
+      }, 5 * 60 * 1000); // Every 5 minutes
+
+      // Setup periodic cleanup
+      setInterval(() => {
+        this.emailSyncService.cleanupCompletedOperations();
+      }, 60 * 60 * 1000); // Every hour
+
+      logger.info('Email services initialized successfully');
+    } catch (error) {
+      logger.error('Failed to initialize email services:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Setup graceful shutdown handlers
    */
   private setupGracefulShutdown(): void {
@@ -232,6 +283,20 @@ class App {
       logger.info(`Received ${signal}, starting graceful shutdown...`);
 
       try {
+        // Shutdown email services
+        if (this.emailSyncService) {
+          await this.emailSyncService.shutdown();
+        }
+        if (this.emailServiceFactory) {
+          await this.emailServiceFactory.cleanup();
+        }
+        if (this.emailServiceMonitor) {
+          this.emailServiceMonitor.shutdown();
+        }
+        if (this.databaseService) {
+          await this.databaseService.shutdown();
+        }
+
         // Close database connections
         await database.close();
         

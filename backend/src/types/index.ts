@@ -77,29 +77,100 @@ export interface JWTPayload {
   exp: number;
 }
 
+// Email Provider Types
+export type EmailProvider = 'microsoft' | 'gmail' | 'imap' | 'exchange';
+
+export interface EmailProviderConfig {
+  provider: EmailProvider;
+  displayName: string;
+  authType: 'oauth2' | 'basic' | 'ntlm';
+  scopes?: string[];
+  endpoints: {
+    auth?: string;
+    token?: string;
+    api?: string;
+  };
+  capabilities: {
+    sendEmail: boolean;
+    readEmail: boolean;
+    searchEmail: boolean;
+    webhooks: boolean;
+    calendar: boolean;
+    contacts: boolean;
+  };
+}
+
+// OAuth 2.0 Types
+export interface OAuthConfig {
+  clientId: string;
+  clientSecret: string;
+  redirectUri: string;
+  scope: string;
+  authUrl: string;
+  tokenUrl: string;
+  userInfoUrl?: string;
+}
+
+export interface OAuthTokens {
+  accessToken: string;
+  refreshToken?: string;
+  idToken?: string;
+  tokenType: string;
+  expiresIn: number;
+  expiresAt: Date;
+  scope?: string;
+}
+
 // Email Account Types
 export interface EmailAccount {
   id: string;
   userId: string;
-  provider: 'microsoft' | 'gmail' | 'exchange';
+  provider: EmailProvider;
   email: string;
   displayName: string;
   isConnected: boolean;
   lastSyncAt?: Date;
-  syncStatus: 'idle' | 'syncing' | 'error';
+  syncStatus: 'idle' | 'syncing' | 'error' | 'initializing' | 'suspended';
   errorMessage?: string;
+  connectionConfig: {
+    oauth?: OAuthTokens;
+    imap?: {
+      host: string;
+      port: number;
+      secure: boolean;
+      username: string;
+      password: string;
+    };
+    exchange?: {
+      serverUrl: string;
+      username: string;
+      password: string;
+      domain?: string;
+    };
+  };
   folderStructure: {
     inbox: string;
     sent: string;
     drafts: string;
+    trash: string;
+    spam?: string;
     custom: string[];
   };
   syncSettings: {
     autoSync: boolean;
-    syncInterval: number;
-    syncScope: 'recent' | 'all';
+    syncInterval: number; // in minutes
+    syncScope: 'recent' | 'all' | 'custom';
+    maxEmails?: number;
+    syncFolders: string[];
+    enableRealtime: boolean;
+  };
+  quotaInfo?: {
+    used: number;
+    total: number;
+    remainingQuota: number;
   };
   createdAt: Date;
+  updatedAt: Date;
 }
 
 // Microsoft Graph API Types
@@ -157,6 +228,245 @@ export interface GraphMessage {
   internetMessageId: string;
 }
 
+// Gmail API Types
+export interface GmailMessage {
+  id: string;
+  threadId: string;
+  labelIds: string[];
+  snippet: string;
+  historyId: string;
+  internalDate: string;
+  payload: {
+    partId: string;
+    mimeType: string;
+    filename: string;
+    headers: Array<{
+      name: string;
+      value: string;
+    }>;
+    body: {
+      attachmentId?: string;
+      size: number;
+      data?: string;
+    };
+    parts?: any[];
+  };
+  sizeEstimate: number;
+}
+
+export interface GmailProfile {
+  emailAddress: string;
+  messagesTotal: number;
+  threadsTotal: number;
+  historyId: string;
+}
+
+// IMAP Types
+export interface ImapMessage {
+  uid: number;
+  flags: string[];
+  date: Date;
+  struct: any;
+  size: number;
+  envelope: {
+    date: Date;
+    subject: string;
+    from: Array<{
+      name?: string;
+      mailbox: string;
+      host: string;
+    }>;
+    to: Array<{
+      name?: string;
+      mailbox: string;
+      host: string;
+    }>;
+    cc?: Array<{
+      name?: string;
+      mailbox: string;
+      host: string;
+    }>;
+    messageId: string;
+  };
+}
+
+// Exchange Web Services (EWS) Types
+export interface EwsMessage {
+  itemId: {
+    id: string;
+    changeKey: string;
+  };
+  subject: string;
+  body: {
+    bodyType: 'HTML' | 'Text';
+    value: string;
+  };
+  from: {
+    name: string;
+    emailAddress: string;
+  };
+  toRecipients: Array<{
+    name: string;
+    emailAddress: string;
+  }>;
+  ccRecipients?: Array<{
+    name: string;
+    emailAddress: string;
+  }>;
+  importance: 'Low' | 'Normal' | 'High';
+  isRead: boolean;
+  dateTimeReceived: string;
+  dateTimeSent: string;
+  hasAttachments: boolean;
+  conversationId: string;
+}
+
+// Unified Email Message Interface
+export interface UnifiedEmailMessage {
+  id: string;
+  providerId: string; // Original ID from provider
+  provider: EmailProvider;
+  accountId: string;
+  subject: string;
+  sender: {
+    name?: string;
+    address: string;
+  };
+  recipients: {
+    to: Array<{ name?: string; address: string }>;
+    cc?: Array<{ name?: string; address: string }>;
+    bcc?: Array<{ name?: string; address: string }>;
+  };
+  content: {
+    text?: string;
+    html?: string;
+    snippet?: string;
+  };
+  receivedAt: Date;
+  sentAt?: Date;
+  importance: 'low' | 'normal' | 'high';
+  isRead: boolean;
+  isDraft: boolean;
+  hasAttachments: boolean;
+  attachments: Array<{
+    id: string;
+    name: string;
+    contentType: string;
+    size: number;
+    downloadUrl?: string;
+  }>;
+  labels: string[];
+  folders: string[];
+  flags: string[];
+  conversationId?: string;
+  threadId?: string;
+  internetMessageId?: string;
+  metadata: {
+    originalData?: any;
+    customProperties?: Record<string, any>;
+  };
+}
+
+// Email Service Operation Types
+export interface EmailSearchQuery {
+  query?: string;
+  folder?: string;
+  from?: string;
+  to?: string;
+  subject?: string;
+  hasAttachment?: boolean;
+  isRead?: boolean;
+  importance?: 'low' | 'normal' | 'high';
+  dateRange?: {
+    start: Date;
+    end: Date;
+  };
+  labels?: string[];
+  limit?: number;
+  offset?: number;
+  orderBy?: 'date' | 'subject' | 'from' | 'importance';
+  orderDirection?: 'asc' | 'desc';
+}
+
+export interface EmailSendRequest {
+  to: Array<{ name?: string; address: string }>;
+  cc?: Array<{ name?: string; address: string }>;
+  bcc?: Array<{ name?: string; address: string }>;
+  subject: string;
+  body: {
+    text?: string;
+    html?: string;
+  };
+  attachments?: Array<{
+    name: string;
+    content: Buffer | string;
+    contentType: string;
+  }>;
+  importance?: 'low' | 'normal' | 'high';
+  replyTo?: { name?: string; address: string };
+  headers?: Record<string, string>;
+}
+
+export interface EmailOperationResult {
+  success: boolean;
+  data?: any;
+  error?: {
+    code: string;
+    message: string;
+    details?: any;
+  };
+  metadata?: {
+    provider: EmailProvider;
+    operationType: string;
+    timestamp: Date;
+    executionTime: number;
+  };
+}
+
+// Email Service Interface
+export interface IEmailService {
+  provider: EmailProvider;
+  isConnected(): Promise<boolean>;
+  connect(config: any): Promise<void>;
+  disconnect(): Promise<void>;
+  
+  // Authentication
+  authenticate(tokens: OAuthTokens): Promise<boolean>;
+  refreshTokens(): Promise<OAuthTokens>;
+  
+  // Email operations
+  getMessages(query?: EmailSearchQuery): Promise<UnifiedEmailMessage[]>;
+  getMessage(messageId: string): Promise<UnifiedEmailMessage>;
+  sendMessage(message: EmailSendRequest): Promise<EmailOperationResult>;
+  deleteMessage(messageId: string): Promise<EmailOperationResult>;
+  markAsRead(messageId: string, isRead: boolean): Promise<EmailOperationResult>;
+  
+  // Folder operations
+  getFolders(): Promise<Array<{ id: string; name: string; type: string }>>;
+  moveMessage(messageId: string, folderId: string): Promise<EmailOperationResult>;
+  
+  // Sync operations
+  syncMessages(options?: { incremental?: boolean; folderId?: string }): Promise<{
+    newMessages: UnifiedEmailMessage[];
+    updatedMessages: UnifiedEmailMessage[];
+    deletedMessageIds: string[];
+  }>;
+  
+  // User info
+  getUserInfo(): Promise<{
+    email: string;
+    name: string;
+    quota?: {
+      used: number;
+      total: number;
+    };
+  }>;
+  
+  // Webhook support
+  setupWebhook?(callbackUrl: string): Promise<{ subscriptionId: string }>;
+  removeWebhook?(subscriptionId: string): Promise<void>;
+}
+
 // Request/Response Types
 export interface CreateUserRequest {
   email: string;
@@ -176,9 +486,96 @@ export interface MicrosoftAuthRequest {
 }
 
 export interface ConnectEmailRequest {
-  provider: 'microsoft' | 'gmail' | 'exchange';
+  provider: EmailProvider;
   code?: string;
   state?: string;
+  config?: {
+    // For IMAP/SMTP
+    host?: string;
+    port?: number;
+    secure?: boolean;
+    username?: string;
+    password?: string;
+    // For Exchange
+    serverUrl?: string;
+    domain?: string;
+  };
+}
+
+// Email Sync Types
+export interface SyncOperation {
+  id: string;
+  accountId: string;
+  type: 'full' | 'incremental' | 'realtime';
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+  startedAt: Date;
+  completedAt?: Date;
+  progress: {
+    processed: number;
+    total: number;
+    currentFolder?: string;
+  };
+  stats: {
+    newMessages: number;
+    updatedMessages: number;
+    deletedMessages: number;
+    errors: number;
+  };
+  error?: {
+    code: string;
+    message: string;
+    details?: any;
+  };
+}
+
+export interface WebhookNotification {
+  id: string;
+  provider: EmailProvider;
+  accountId: string;
+  type: 'message.created' | 'message.updated' | 'message.deleted' | 'folder.created' | 'folder.updated';
+  data: {
+    messageId?: string;
+    folderId?: string;
+    changeType?: string;
+    timestamp: Date;
+  };
+  signature?: string;
+  receivedAt: Date;
+}
+
+// Rate Limiting Types
+export interface RateLimitConfig {
+  provider: EmailProvider;
+  limits: {
+    requestsPerSecond: number;
+    requestsPerMinute: number;
+    requestsPerHour: number;
+    requestsPerDay: number;
+  };
+  quotas: {
+    emailsPerDay?: number;
+    apiCallsPerMonth?: number;
+  };
+}
+
+export interface RateLimitStatus {
+  provider: EmailProvider;
+  accountId: string;
+  current: {
+    requestsThisSecond: number;
+    requestsThisMinute: number;
+    requestsThisHour: number;
+    requestsThisDay: number;
+  };
+  limits: RateLimitConfig['limits'];
+  resetTimes: {
+    second: Date;
+    minute: Date;
+    hour: Date;
+    day: Date;
+  };
+  isThrottled: boolean;
+  retryAfter?: number;
 }
 
 // Error Types
@@ -223,11 +620,27 @@ export interface EnvironmentConfig {
   JWT_EXPIRES_IN: string;
   REFRESH_TOKEN_SECRET: string;
   REFRESH_TOKEN_EXPIRES_IN: string;
+  
+  // Microsoft Graph API
   MICROSOFT_CLIENT_ID: string;
   MICROSOFT_CLIENT_SECRET: string;
   MICROSOFT_TENANT_ID: string;
   MICROSOFT_REDIRECT_URI: string;
   MICROSOFT_GRAPH_SCOPE: string;
+  
+  // Google Gmail API
+  GOOGLE_CLIENT_ID: string;
+  GOOGLE_CLIENT_SECRET: string;
+  GOOGLE_REDIRECT_URI: string;
+  GOOGLE_GMAIL_SCOPE: string;
+  
+  // Email Service Settings
+  EMAIL_SYNC_INTERVAL: number;
+  EMAIL_BATCH_SIZE: number;
+  EMAIL_SYNC_TIMEOUT: number;
+  EMAIL_WEBHOOK_SECRET: string;
+  EMAIL_ENCRYPTION_KEY: string;
+  
   CORS_ORIGIN: string;
   RATE_LIMIT_WINDOW_MS: number;
   RATE_LIMIT_MAX_REQUESTS: number;

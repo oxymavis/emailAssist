@@ -74,25 +74,107 @@ export const securityHeaders = (req: Request, res: Response, next: NextFunction)
 };
 
 /**
- * Global rate limiting middleware (temporarily disabled)
+ * Global rate limiting middleware
+ * Applies general rate limiting to all API endpoints
  */
-export const globalRateLimit = (req: Request, res: Response, next: NextFunction): void => {
-  // Temporarily disable rate limiting to focus on core functionality
-  next();
-};
+export const globalRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 1000, // Max 1000 requests per window per IP
+  message: {
+    success: false,
+    error: {
+      code: 'RATE_LIMIT_EXCEEDED',
+      message: 'Too many requests from this IP, please try again later'
+    },
+    meta: {
+      timestamp: new Date().toISOString(),
+      retryAfter: 15 * 60 // seconds
+    }
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req) => {
+    // Skip rate limiting for health checks and internal routes
+    return req.path === '/health' || req.path === '/';
+  },
+  handler: (req, res) => {
+    logger.warn('Rate limit exceeded', {
+      ip: req.ip,
+      path: req.path,
+      userAgent: req.get('User-Agent'),
+      requestId: req.requestId
+    });
+    
+    res.status(429).json({
+      success: false,
+      error: {
+        code: 'RATE_LIMIT_EXCEEDED',
+        message: 'Too many requests from this IP, please try again later'
+      },
+      meta: {
+        timestamp: new Date().toISOString(),
+        requestId: req.requestId,
+        retryAfter: 15 * 60
+      }
+    });
+  }
+});
 
 /**
- * Custom rate limiter factory (temporarily disabled)
+ * Custom rate limiter factory for specific endpoints
  */
 export const rateLimiter = (options: {
   maxRequests: number;
   windowMs: number;
   message?: string;
+  skipSuccessfulRequests?: boolean;
+  keyGenerator?: (req: Request) => string;
 }) => {
-  return (req: Request, res: Response, next: NextFunction): void => {
-    // Temporarily disable rate limiting
-    next();
-  };
+  return rateLimit({
+    windowMs: options.windowMs,
+    max: options.maxRequests,
+    skipSuccessfulRequests: options.skipSuccessfulRequests ?? false,
+    keyGenerator: options.keyGenerator || ((req) => {
+      // Use user ID if authenticated, otherwise fall back to IP
+      return req.user?.id || req.ip;
+    }),
+    message: {
+      success: false,
+      error: {
+        code: 'ENDPOINT_RATE_LIMIT_EXCEEDED',
+        message: options.message || `Too many requests to this endpoint. Maximum ${options.maxRequests} requests per ${Math.floor(options.windowMs / 1000)} seconds allowed.`
+      },
+      meta: {
+        timestamp: new Date().toISOString(),
+        retryAfter: Math.floor(options.windowMs / 1000)
+      }
+    },
+    standardHeaders: true,
+    legacyHeaders: false,
+    handler: (req, res) => {
+      logger.warn('Endpoint rate limit exceeded', {
+        endpoint: req.path,
+        userId: req.user?.id,
+        ip: req.ip,
+        limit: options.maxRequests,
+        windowMs: options.windowMs,
+        requestId: req.requestId
+      });
+      
+      res.status(429).json({
+        success: false,
+        error: {
+          code: 'ENDPOINT_RATE_LIMIT_EXCEEDED',
+          message: options.message || `Too many requests to this endpoint. Maximum ${options.maxRequests} requests per ${Math.floor(options.windowMs / 1000)} seconds allowed.`
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+          requestId: req.requestId,
+          retryAfter: Math.floor(options.windowMs / 1000)
+        }
+      });
+    }
+  });
 };
 
 /**
@@ -231,6 +313,97 @@ export const corsOptions = {
 };
 
 /**
+ * API performance monitoring middleware
+ */
+export const performanceMonitor = (req: Request, res: Response, next: NextFunction): void => {
+  const startTime = process.hrtime.bigint();
+  const startMemory = process.memoryUsage();
+  
+  // Track response time and memory usage
+  res.on('finish', () => {
+    const endTime = process.hrtime.bigint();
+    const responseTime = Number(endTime - startTime) / 1000000; // Convert to milliseconds
+    const endMemory = process.memoryUsage();
+    
+    const performanceMetrics = {
+      method: req.method,
+      path: req.path,
+      statusCode: res.statusCode,
+      responseTime,
+      memoryDelta: {
+        rss: endMemory.rss - startMemory.rss,
+        heapUsed: endMemory.heapUsed - startMemory.heapUsed,
+        heapTotal: endMemory.heapTotal - startMemory.heapTotal,
+        external: endMemory.external - startMemory.external
+      },
+      timestamp: new Date().toISOString(),
+      requestId: req.requestId
+    };
+
+    // Log slow requests (> 1000ms)
+    if (responseTime > 1000) {
+      logger.warn('Slow API response detected', performanceMetrics);
+    }
+
+    // Log to performance monitoring (could integrate with monitoring service)
+    logger.debug('API performance metrics', performanceMetrics);
+    
+    // Set performance headers
+    res.set('X-Response-Time', `${responseTime.toFixed(2)}ms`);
+  });
+  
+  next();
+};
+
+/**
+ * Request size monitoring middleware
+ */
+export const requestSizeMonitor = (req: Request, res: Response, next: NextFunction): void => {
+  const contentLength = req.get('Content-Length');
+  
+  if (contentLength) {
+    const sizeInMB = parseInt(contentLength) / (1024 * 1024);
+    
+    // Log large requests (> 10MB)
+    if (sizeInMB > 10) {
+      logger.warn('Large request detected', {
+        path: req.path,
+        method: req.method,
+        sizeInMB: sizeInMB.toFixed(2),
+        userAgent: req.get('User-Agent'),
+        requestId: req.requestId
+      });
+    }
+    
+    // Block extremely large requests (> 50MB)
+    if (sizeInMB > 50) {
+      logger.error('Request too large, blocking', {
+        path: req.path,
+        method: req.method,
+        sizeInMB: sizeInMB.toFixed(2),
+        requestId: req.requestId
+      });
+      
+      res.status(413).json({
+        success: false,
+        error: {
+          code: 'REQUEST_TOO_LARGE',
+          message: 'Request payload too large'
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+          requestId: req.requestId,
+          maxSizeInMB: 50
+        }
+      });
+      return;
+    }
+  }
+  
+  next();
+};
+
+/**
  * Health check middleware
  */
 export const healthCheck = async (req: Request, res: Response): Promise<void> => {
@@ -243,6 +416,10 @@ export const healthCheck = async (req: Request, res: Response): Promise<void> =>
     const redis = (await import('@/config/redis')).default;
     const redisHealthy = await redis.healthCheck();
 
+    // Get performance metrics
+    const memoryUsage = process.memoryUsage();
+    const cpuUsage = process.cpuUsage();
+
     const health = {
       status: 'healthy',
       timestamp: new Date().toISOString(),
@@ -251,6 +428,17 @@ export const healthCheck = async (req: Request, res: Response): Promise<void> =>
       services: {
         database: dbHealthy ? 'healthy' : 'unhealthy',
         redis: redisHealthy ? 'healthy' : 'unhealthy'
+      },
+      performance: {
+        memory: {
+          rss: Math.round(memoryUsage.rss / 1024 / 1024), // MB
+          heapUsed: Math.round(memoryUsage.heapUsed / 1024 / 1024), // MB
+          heapTotal: Math.round(memoryUsage.heapTotal / 1024 / 1024), // MB
+        },
+        cpu: {
+          user: cpuUsage.user,
+          system: cpuUsage.system
+        }
       }
     };
 

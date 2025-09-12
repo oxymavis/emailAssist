@@ -1,0 +1,126 @@
+# Email Assist - Staging Environment Docker Compose Configuration
+version: '3.8'
+
+networks:
+  email-assist-staging:
+    driver: bridge
+
+volumes:
+  postgres_staging_data:
+    driver: local
+  redis_staging_data:
+    driver: local
+  staging_logs:
+    driver: local
+
+services:
+  # Staging Database
+  postgres-staging:
+    image: postgres:15-alpine
+    container_name: email-assist-postgres-staging
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-email_assist_staging}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_staging_data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5434:5432"
+    networks:
+      - email-assist-staging
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-email_assist_staging}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Staging Cache
+  redis-staging:
+    image: redis:7-alpine
+    container_name: email-assist-redis-staging
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - redis_staging_data:/data
+    ports:
+      - "6381:6379"
+    networks:
+      - email-assist-staging
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # Staging Backend
+  backend-staging:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: email-assist-backend-staging
+    restart: unless-stopped
+    environment:
+      NODE_ENV: staging
+      PORT: 3001
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres-staging:5432/${POSTGRES_DB:-email_assist_staging}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis-staging:6379
+      JWT_SECRET: ${JWT_SECRET}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      LOG_LEVEL: debug
+    volumes:
+      - staging_logs:/app/logs
+    networks:
+      - email-assist-staging
+    depends_on:
+      postgres-staging:
+        condition: service_healthy
+      redis-staging:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Staging Frontend
+  frontend-staging:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: email-assist-frontend-staging
+    restart: unless-stopped
+    environment:
+      VITE_API_BASE_URL: https://staging-api.emailassist.com/api
+    networks:
+      - email-assist-staging
+    depends_on:
+      - backend-staging
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Staging Reverse Proxy
+  nginx-staging:
+    image: nginx:alpine
+    container_name: email-assist-nginx-staging
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+      - "8443:443"
+    volumes:
+      - ./docker/nginx/staging.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - email-assist-staging
+    depends_on:
+      - frontend-staging
+      - backend-staging
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3

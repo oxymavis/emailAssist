@@ -6,7 +6,7 @@
 import { Request, Response } from 'express';
 import { body, query, param, validationResult } from 'express-validator';
 import { Pool } from 'pg';
-import RedisManager from '@/config/redis';
+import RedisManager from '../config/redis';
 import fs from 'fs';
 import path from 'path';
 import { promisify } from 'util';
@@ -126,41 +126,10 @@ export class ReportsController {
         await this.templateService.incrementUsageCount(data.template_id);
       }
 
-      // 创建报告记录
-      const reportId = uuidv4();
-      const now = new Date();
+      // 直接使用报告生成服务创建和生成报告
+      const report = await this.reportService.generateReport(data, req.user!.id);
 
-      const report: Report = {
-        id: reportId,
-        user_id: req.user!.id,
-        title: data.title,
-        description: data.description,
-        report_type: data.report_type,
-        date_range: data.date_range,
-        status: ReportStatus.PENDING,
-        format: data.format,
-        parameters: data.parameters,
-        template_id: data.template_id,
-        scheduled_at: data.scheduled_at,
-        created_at: now,
-        updated_at: now
-      };
-
-      await this.createReportRecord(report);
-
-      // 如果是立即生成，启动生成过程
-      if (!data.scheduled_at) {
-        // 异步生成报告
-        setImmediate(async () => {
-          try {
-            await this.reportService.generateReport(reportId);
-          } catch (error) {
-            logger.error(`异步生成报告失败: ${reportId}`, error);
-          }
-        });
-      }
-
-      res.json(formatResponse({ report_id: reportId }, '报告生成任务已创建', 200));
+      res.json(formatResponse({ report_id: report.id }, '报告生成任务已创建', 200));
 
     } catch (error) {
       logger.error('创建报告失败:', error);

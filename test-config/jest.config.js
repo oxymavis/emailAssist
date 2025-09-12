@@ -23,6 +23,9 @@ const config = {
     '^@/services/(.*)$': '<rootDir>/src/services/$1',
     '^@/store/(.*)$': '<rootDir>/src/store/$1',
     '^@/themes/(.*)$': '<rootDir>/src/themes/$1',
+    // 静态资源模拟
+    '\\.(css|less|scss|sass)$': 'identity-obj-proxy',
+    '\\.(gif|ttf|eot|svg|png)$': '<rootDir>/test-config/__mocks__/fileMock.js',
   },
   
   // 文件扩展名
@@ -91,11 +94,6 @@ const config = {
     },
   },
   
-  // 模拟静态资源
-  moduleNameMapping: {
-    '\\.(css|less|scss|sass)$': 'identity-obj-proxy',
-    '\\.(gif|ttf|eot|svg|png)$': '<rootDir>/test-config/__mocks__/fileMock.js',
-  },
   
   // 测试超时
   testTimeout: 10000,

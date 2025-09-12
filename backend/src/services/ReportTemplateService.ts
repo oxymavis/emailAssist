@@ -4,7 +4,7 @@
  */
 
 import { Pool } from 'pg';
-import RedisManager from '@/config/redis';
+import RedisManager from '../config/redis';
 import { 
   ReportTemplate, 
   CreateReportTemplateData, 
@@ -40,15 +40,33 @@ export class ReportTemplateService {
       description: '每日邮件处理情况统计报告',
       category: 'daily',
       report_type: ReportType.DAILY,
+      is_system: true,
+      is_active: true,
+      configuration: {
+        default_format: ['PDF'] as any[],
+        default_parameters: {
+          include_charts: true,
+          include_attachments: true,
+          group_by: 'hour',
+          custom_fields: ['total_emails', 'unread_emails', 'high_priority', 'response_time']
+        },
+        required_fields: ['title', 'date_range'],
+        optional_fields: ['description', 'parameters'],
+        chart_types: ['bar', 'line', 'pie'],
+        export_options: {
+          include_raw_data: false,
+          include_summary: true,
+          include_charts: true
+        }
+      },
       default_parameters: {
         include_charts: true,
         include_attachments: true,
-        metrics: ['total_emails', 'unread_emails', 'high_priority', 'response_time'],
-        group_by: ['hour', 'sender', 'priority']
+        group_by: 'hour',
+        custom_fields: ['total_emails', 'unread_emails', 'high_priority', 'response_time']
       },
       layout_config: this.getDefaultLayoutConfig('daily'),
       chart_configs: this.getDefaultChartConfigs('daily'),
-      is_system: true,
       usage_count: 0,
       created_at: new Date(),
       updated_at: new Date()
@@ -61,16 +79,33 @@ export class ReportTemplateService {
       description: '每周邮件处理统计和AI分析报告',
       category: 'weekly',
       report_type: ReportType.WEEKLY,
+      is_system: true,
+      is_active: true,
+      configuration: {
+        default_format: ['PDF'] as any[],
+        default_parameters: {
+          include_charts: true,
+          include_attachments: true,
+          group_by: 'day',
+          custom_fields: ['total_emails', 'avg_response_time', 'sentiment_analysis', 'top_senders']
+        },
+        required_fields: ['title', 'date_range'],
+        optional_fields: ['description', 'parameters'],
+        chart_types: ['line', 'pie', 'bar'],
+        export_options: {
+          include_raw_data: false,
+          include_summary: true,
+          include_charts: true
+        }
+      },
       default_parameters: {
         include_charts: true,
         include_attachments: true,
-        include_raw_data: false,
-        metrics: ['total_emails', 'avg_response_time', 'sentiment_analysis', 'top_senders'],
-        group_by: ['day', 'category', 'priority', 'sentiment']
+        group_by: 'day',
+        custom_fields: ['total_emails', 'avg_response_time', 'sentiment_analysis', 'top_senders']
       },
       layout_config: this.getDefaultLayoutConfig('weekly'),
       chart_configs: this.getDefaultChartConfigs('weekly'),
-      is_system: true,
       usage_count: 0,
       created_at: new Date(),
       updated_at: new Date()
@@ -83,16 +118,33 @@ export class ReportTemplateService {
       description: '月度邮件处理综合分析报告',
       category: 'monthly',
       report_type: ReportType.MONTHLY,
+      is_system: true,
+      is_active: true,
+      configuration: {
+        default_format: ['PDF', 'EXCEL'] as any[],
+        default_parameters: {
+          include_charts: true,
+          include_attachments: true,
+          group_by: 'week',
+          custom_fields: ['total_emails', 'trends', 'top_topics', 'efficiency_metrics']
+        },
+        required_fields: ['title', 'date_range'],
+        optional_fields: ['description', 'parameters'],
+        chart_types: ['area', 'bar', 'line'],
+        export_options: {
+          include_raw_data: true,
+          include_summary: true,
+          include_charts: true
+        }
+      },
       default_parameters: {
         include_charts: true,
         include_attachments: true,
-        include_raw_data: true,
-        metrics: ['total_emails', 'trends', 'top_topics', 'efficiency_metrics'],
-        group_by: ['week', 'category', 'sender_domain', 'priority']
+        group_by: 'week',
+        custom_fields: ['total_emails', 'trends', 'top_topics', 'efficiency_metrics']
       },
       layout_config: this.getDefaultLayoutConfig('monthly'),
       chart_configs: this.getDefaultChartConfigs('monthly'),
-      is_system: true,
       usage_count: 0,
       created_at: new Date(),
       updated_at: new Date()
@@ -105,15 +157,33 @@ export class ReportTemplateService {
       description: '邮件处理性能和规则执行效率分析',
       category: 'performance',
       report_type: ReportType.PERFORMANCE,
+      is_system: true,
+      is_active: true,
+      configuration: {
+        default_format: ['PDF'] as any[],
+        default_parameters: {
+          include_charts: true,
+          include_attachments: false,
+          group_by: 'rule',
+          custom_fields: ['rule_performance', 'processing_time', 'success_rates', 'error_analysis']
+        },
+        required_fields: ['title', 'date_range'],
+        optional_fields: ['description', 'parameters'],
+        chart_types: ['bar', 'line'],
+        export_options: {
+          include_raw_data: false,
+          include_summary: true,
+          include_charts: true
+        }
+      },
       default_parameters: {
         include_charts: true,
         include_attachments: false,
-        metrics: ['rule_performance', 'processing_time', 'success_rates', 'error_analysis'],
-        group_by: ['rule', 'time_period', 'error_type']
+        group_by: 'rule',
+        custom_fields: ['rule_performance', 'processing_time', 'success_rates', 'error_analysis']
       },
       layout_config: this.getDefaultLayoutConfig('performance'),
       chart_configs: this.getDefaultChartConfigs('performance'),
-      is_system: true,
       usage_count: 0,
       created_at: new Date(),
       updated_at: new Date()
@@ -126,16 +196,33 @@ export class ReportTemplateService {
       description: '全面的邮件处理和AI分析综合报告',
       category: 'summary',
       report_type: ReportType.SUMMARY,
+      is_system: true,
+      is_active: true,
+      configuration: {
+        default_format: ['PDF', 'EXCEL'] as any[],
+        default_parameters: {
+          include_charts: true,
+          include_attachments: true,
+          group_by: 'all',
+          custom_fields: ['overview', 'ai_insights', 'trends', 'recommendations']
+        },
+        required_fields: ['title', 'date_range'],
+        optional_fields: ['description', 'parameters'],
+        chart_types: ['doughnut', 'bar', 'line'],
+        export_options: {
+          include_raw_data: true,
+          include_summary: true,
+          include_charts: true
+        }
+      },
       default_parameters: {
         include_charts: true,
         include_attachments: true,
-        include_raw_data: true,
-        metrics: ['overview', 'ai_insights', 'trends', 'recommendations'],
-        group_by: ['all']
+        group_by: 'all',
+        custom_fields: ['overview', 'ai_insights', 'trends', 'recommendations']
       },
       layout_config: this.getDefaultLayoutConfig('summary'),
       chart_configs: this.getDefaultChartConfigs('summary'),
-      is_system: true,
       usage_count: 0,
       created_at: new Date(),
       updated_at: new Date()
@@ -152,67 +239,61 @@ export class ReportTemplateService {
       page_size: 'A4',
       orientation: 'portrait',
       margins: { top: 50, right: 50, bottom: 50, left: 50 },
-      header: {
-        enabled: true,
-        template: '{{title}} - {{date}}'
-      },
-      footer: {
-        enabled: true,
-        template: 'Page {{page}} of {{total}} - Generated by Email Assist'
-      },
+      header: '{{title}} - {{date}}',
+      footer: 'Page {{page}} of {{total}} - Generated by Email Assist',
       sections: []
     };
 
     switch (type) {
       case 'daily':
         baseConfig.sections = [
-          { id: 'summary', name: '今日概览', type: 'summary', order: 1, config: {} },
-          { id: 'hourly_chart', name: '时间分布', type: 'chart', order: 2, config: { chart_id: 'hourly_distribution' } },
-          { id: 'priority_stats', name: '优先级统计', type: 'table', order: 3, config: {} },
-          { id: 'top_senders', name: '主要发件人', type: 'table', order: 4, config: {} }
+          { id: 'summary', name: '今日概览', title: '今日概览', type: 'summary', order: 1, config: {} },
+          { id: 'hourly_chart', name: '时间分布', title: '时间分布', type: 'chart', order: 2, config: { chart_id: 'hourly_distribution' } },
+          { id: 'priority_stats', name: '优先级统计', title: '优先级统计', type: 'table', order: 3, config: {} },
+          { id: 'top_senders', name: '主要发件人', title: '主要发件人', type: 'table', order: 4, config: {} }
         ];
         break;
 
       case 'weekly':
         baseConfig.sections = [
-          { id: 'weekly_summary', name: '本周概览', type: 'summary', order: 1, config: {} },
-          { id: 'daily_trend', name: '每日趋势', type: 'chart', order: 2, config: { chart_id: 'daily_trend' } },
-          { id: 'sentiment_analysis', name: '情感分析', type: 'chart', order: 3, config: { chart_id: 'sentiment_pie' } },
-          { id: 'category_breakdown', name: '类别分布', type: 'table', order: 4, config: {} },
-          { id: 'ai_insights', name: 'AI洞察', type: 'text', order: 5, config: {} }
+          { id: 'weekly_summary', name: '本周概览', title: '本周概览', type: 'summary', order: 1, config: {} },
+          { id: 'daily_trend', name: '每日趋势', title: '每日趋势', type: 'chart', order: 2, config: { chart_id: 'daily_trend' } },
+          { id: 'sentiment_analysis', name: '情感分析', title: '情感分析', type: 'chart', order: 3, config: { chart_id: 'sentiment_pie' } },
+          { id: 'category_breakdown', name: '类别分布', title: '类别分布', type: 'table', order: 4, config: {} },
+          { id: 'ai_insights', name: 'AI洞察', title: 'AI洞察', type: 'text', order: 5, config: {} }
         ];
         break;
 
       case 'monthly':
         baseConfig.orientation = 'landscape';
         baseConfig.sections = [
-          { id: 'executive_summary', name: '执行摘要', type: 'summary', order: 1, config: {} },
-          { id: 'trend_analysis', name: '趋势分析', type: 'chart', order: 2, config: { chart_id: 'monthly_trend' } },
-          { id: 'performance_metrics', name: '性能指标', type: 'table', order: 3, config: {} },
-          { id: 'top_topics', name: '热门话题', type: 'chart', order: 4, config: { chart_id: 'topic_cloud' } },
-          { id: 'detailed_stats', name: '详细统计', type: 'table', order: 5, config: {} },
-          { id: 'recommendations', name: '优化建议', type: 'text', order: 6, config: {} }
+          { id: 'executive_summary', name: '执行摘要', title: '执行摘要', type: 'summary', order: 1, config: {} },
+          { id: 'trend_analysis', name: '趋势分析', title: '趋势分析', type: 'chart', order: 2, config: { chart_id: 'monthly_trend' } },
+          { id: 'performance_metrics', name: '性能指标', title: '性能指标', type: 'table', order: 3, config: {} },
+          { id: 'top_topics', name: '热门话题', title: '热门话题', type: 'chart', order: 4, config: { chart_id: 'topic_cloud' } },
+          { id: 'detailed_stats', name: '详细统计', title: '详细统计', type: 'table', order: 5, config: {} },
+          { id: 'recommendations', name: '优化建议', title: '优化建议', type: 'text', order: 6, config: {} }
         ];
         break;
 
       case 'performance':
         baseConfig.sections = [
-          { id: 'performance_overview', name: '性能概览', type: 'summary', order: 1, config: {} },
-          { id: 'rule_performance', name: '规则性能', type: 'chart', order: 2, config: { chart_id: 'rule_performance' } },
-          { id: 'processing_time', name: '处理时间', type: 'chart', order: 3, config: { chart_id: 'processing_time' } },
-          { id: 'error_analysis', name: '错误分析', type: 'table', order: 4, config: {} },
-          { id: 'optimization_tips', name: '优化建议', type: 'text', order: 5, config: {} }
+          { id: 'performance_overview', name: '性能概览', title: '性能概览', type: 'summary', order: 1, config: {} },
+          { id: 'rule_performance', name: '规则性能', title: '规则性能', type: 'chart', order: 2, config: { chart_id: 'rule_performance' } },
+          { id: 'processing_time', name: '处理时间', title: '处理时间', type: 'chart', order: 3, config: { chart_id: 'processing_time' } },
+          { id: 'error_analysis', name: '错误分析', title: '错误分析', type: 'table', order: 4, config: {} },
+          { id: 'optimization_tips', name: '优化建议', title: '优化建议', type: 'text', order: 5, config: {} }
         ];
         break;
 
       case 'summary':
         baseConfig.orientation = 'landscape';
         baseConfig.sections = [
-          { id: 'overview', name: '全面概览', type: 'summary', order: 1, config: {} },
-          { id: 'key_metrics', name: '关键指标', type: 'chart', order: 2, config: { chart_id: 'key_metrics' } },
-          { id: 'ai_insights_summary', name: 'AI分析洞察', type: 'text', order: 3, config: {} },
-          { id: 'performance_summary', name: '性能汇总', type: 'table', order: 4, config: {} },
-          { id: 'recommendations_summary', name: '改进建议', type: 'text', order: 5, config: {} }
+          { id: 'overview', name: '全面概览', title: '全面概览', type: 'summary', order: 1, config: {} },
+          { id: 'key_metrics', name: '关键指标', title: '关键指标', type: 'chart', order: 2, config: { chart_id: 'key_metrics' } },
+          { id: 'ai_insights_summary', name: 'AI分析洞察', title: 'AI分析洞察', type: 'text', order: 3, config: {} },
+          { id: 'performance_summary', name: '性能汇总', title: '性能汇总', type: 'table', order: 4, config: {} },
+          { id: 'recommendations_summary', name: '改进建议', title: '改进建议', type: 'text', order: 5, config: {} }
         ];
         break;
     }
@@ -228,20 +309,18 @@ export class ReportTemplateService {
 
     switch (type) {
       case 'daily':
-        configs.push(
-          {
-            id: 'hourly_distribution',
-            name: '每小时邮件分布',
-            type: 'bar',
-            data_query: 'SELECT hour, COUNT(*) as count FROM messages WHERE DATE(received_date) = CURRENT_DATE GROUP BY EXTRACT(HOUR FROM received_date)',
-            options: {
-              title: '今日每小时邮件分布',
-              xAxis: { title: '时间(小时)' },
-              yAxis: { title: '邮件数量' }
-            },
-            position: { section_id: 'hourly_chart', order: 1 }
+        configs.push({
+          id: 'hourly_distribution',
+          name: '每小时邮件分布',
+          title: '今日每小时邮件分布',
+          type: 'bar',
+          data: [],
+          data_query: 'SELECT hour, COUNT(*) as count FROM messages WHERE DATE(received_date) = CURRENT_DATE GROUP BY EXTRACT(HOUR FROM received_date)',
+          options: {
+            xAxis: { title: '时间(小时)' },
+            yAxis: { title: '邮件数量' }
           }
-        );
+        });
         break;
 
       case 'weekly':
@@ -249,43 +328,40 @@ export class ReportTemplateService {
           {
             id: 'daily_trend',
             name: '每日邮件趋势',
+            title: '本周每日邮件趋势',
             type: 'line',
+            data: [],
             data_query: 'SELECT DATE(received_date) as date, COUNT(*) as count FROM messages WHERE received_date >= CURRENT_DATE - INTERVAL \'7 days\' GROUP BY DATE(received_date)',
             options: {
-              title: '本周每日邮件趋势',
               xAxis: { title: '日期' },
               yAxis: { title: '邮件数量' }
-            },
-            position: { section_id: 'daily_trend', order: 1 }
+            }
           },
           {
             id: 'sentiment_pie',
             name: '情感分布',
+            title: '本周情感分布',
             type: 'pie',
+            data: [],
             data_query: 'SELECT CASE WHEN sentiment_score > 0.1 THEN \'正面\' WHEN sentiment_score < -0.1 THEN \'负面\' ELSE \'中性\' END as sentiment, COUNT(*) as count FROM ai_analysis a JOIN messages m ON a.message_id = m.id WHERE m.received_date >= CURRENT_DATE - INTERVAL \'7 days\' GROUP BY sentiment',
-            options: {
-              title: '本周情感分布'
-            },
-            position: { section_id: 'sentiment_analysis', order: 1 }
+            options: {}
           }
         );
         break;
 
       case 'monthly':
-        configs.push(
-          {
-            id: 'monthly_trend',
-            name: '月度趋势分析',
-            type: 'area',
-            data_query: 'SELECT DATE_TRUNC(\'week\', received_date) as week, COUNT(*) as count FROM messages WHERE received_date >= CURRENT_DATE - INTERVAL \'30 days\' GROUP BY week ORDER BY week',
-            options: {
-              title: '月度邮件趋势',
-              xAxis: { title: '周' },
-              yAxis: { title: '邮件数量' }
-            },
-            position: { section_id: 'trend_analysis', order: 1 }
+        configs.push({
+          id: 'monthly_trend',
+          name: '月度趋势分析',
+          title: '月度邮件趋势',
+          type: 'area',
+          data: [],
+          data_query: 'SELECT DATE_TRUNC(\'week\', received_date) as week, COUNT(*) as count FROM messages WHERE received_date >= CURRENT_DATE - INTERVAL \'30 days\' GROUP BY week ORDER BY week',
+          options: {
+            xAxis: { title: '周' },
+            yAxis: { title: '邮件数量' }
           }
-        );
+        });
         break;
 
       case 'performance':
@@ -293,43 +369,40 @@ export class ReportTemplateService {
           {
             id: 'rule_performance',
             name: '规则执行性能',
+            title: '规则执行次数和平均时间',
             type: 'bar',
+            data: [],
             data_query: 'SELECT r.name, COUNT(rel.id) as executions, AVG(rel.execution_time_ms) as avg_time FROM filter_rules r LEFT JOIN rule_execution_logs rel ON r.id = rel.rule_id GROUP BY r.id, r.name ORDER BY executions DESC',
             options: {
-              title: '规则执行次数和平均时间',
               xAxis: { title: '规则名称' },
               yAxis: { title: '执行次数' }
-            },
-            position: { section_id: 'rule_performance', order: 1 }
+            }
           },
           {
             id: 'processing_time',
             name: '处理时间分布',
+            title: '每日平均处理时间',
             type: 'line',
+            data: [],
             data_query: 'SELECT DATE(created_at) as date, AVG(execution_time_ms) as avg_time FROM rule_execution_logs WHERE created_at >= CURRENT_DATE - INTERVAL \'7 days\' GROUP BY DATE(created_at) ORDER BY date',
             options: {
-              title: '每日平均处理时间',
               xAxis: { title: '日期' },
               yAxis: { title: '平均时间(ms)' }
-            },
-            position: { section_id: 'processing_time', order: 1 }
+            }
           }
         );
         break;
 
       case 'summary':
-        configs.push(
-          {
-            id: 'key_metrics',
-            name: '关键指标仪表板',
-            type: 'doughnut',
-            data_query: 'SELECT \'已处理\' as category, COUNT(*) as count FROM messages WHERE is_read = true UNION SELECT \'未处理\' as category, COUNT(*) as count FROM messages WHERE is_read = false',
-            options: {
-              title: '邮件处理状态'
-            },
-            position: { section_id: 'key_metrics', order: 1 }
-          }
-        );
+        configs.push({
+          id: 'key_metrics',
+          name: '关键指标仪表板',
+          title: '邮件处理状态',
+          type: 'doughnut',
+          data: [],
+          data_query: 'SELECT \'已处理\' as category, COUNT(*) as count FROM messages WHERE is_read = true UNION SELECT \'未处理\' as category, COUNT(*) as count FROM messages WHERE is_read = false',
+          options: {}
+        });
         break;
     }
 
@@ -518,10 +591,12 @@ export class ReportTemplateService {
         description: data.description,
         category: data.category,
         report_type: data.report_type,
+        is_system: false,
+        is_active: true,
+        configuration: data.configuration,
         default_parameters: data.default_parameters,
         layout_config: data.layout_config,
         chart_configs: data.chart_configs,
-        is_system: false,
         created_by: createdBy,
         usage_count: 0,
         created_at: now,
@@ -732,6 +807,7 @@ export class ReportTemplateService {
         description: `基于 "${sourceTemplate.name}" 创建的副本`,
         category: sourceTemplate.category,
         report_type: sourceTemplate.report_type,
+        configuration: sourceTemplate.configuration,
         default_parameters: sourceTemplate.default_parameters,
         layout_config: sourceTemplate.layout_config,
         chart_configs: sourceTemplate.chart_configs
