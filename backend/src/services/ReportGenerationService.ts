@@ -1,6 +1,6 @@
 /**
- * 简化版报告生成服务
- * 提供基本的报告生成功能，专注于让服务启动
+ * Report Generation Service
+ * Automated report generation and scheduling system
  */
 
 import { Pool } from 'pg';
@@ -16,6 +16,13 @@ import {
 } from '../models/Report';
 import logger from '../utils/logger';
 import { v4 as uuidv4 } from 'uuid';
+import * as cron from 'node-cron';
+import database from '@/config/database';
+import { DatabaseError } from '@/utils/errors';
+import PDFDocument from 'pdfkit';
+import ExcelJS from 'exceljs';
+import fs from 'fs';
+import path from 'path';
 
 export class ReportGenerationService {
   private pool: Pool;

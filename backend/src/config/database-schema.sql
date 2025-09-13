@@ -1,181 +1,422 @@
--- Email Assist 数据库架构优化 SQL
--- 创建所有必要的表结构和高性能索引
+-- Email Assist Database Schema
+-- Complete schema for the email analysis and management system
+-- 包含所有P0和P1功能所需的表结构和索引优化
+
+-- Enable required extensions
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- =============================================
--- 1. 创建表结构（如果不存在）
+-- 1. 核心表结构创建
 -- =============================================
 
--- Users 表
+-- Users table (Enhanced with more fields)
 CREATE TABLE IF NOT EXISTS users (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  email VARCHAR(255) UNIQUE NOT NULL,
-  name VARCHAR(255) NOT NULL,
-  avatar TEXT,
-  role VARCHAR(20) DEFAULT 'user' CHECK (role IN ('admin', 'user', 'readonly')),
-  password_hash VARCHAR(255),
-  microsoft_tokens JSONB,
-  settings JSONB DEFAULT '{}',
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email VARCHAR(255) UNIQUE NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    avatar TEXT,
+    role VARCHAR(20) DEFAULT 'user' CHECK (role IN ('admin', 'manager', 'user', 'readonly')),
+    status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'inactive', 'suspended')),
+    password_hash VARCHAR(255),
+    
+    -- OAuth tokens (encrypted storage)
+    microsoft_tokens JSONB,
+    google_tokens JSONB,
+    
+    -- User preferences and settings
+    settings JSONB DEFAULT '{
+        "theme": "light",
+        "language": "zh-CN",
+        "timezone": "Asia/Shanghai",
+        "notifications": {
+            "email": true,
+            "browser": true,
+            "urgent_only": false
+        },
+        "analysis": {
+            "auto_analysis": true,
+            "sentiment_threshold": 0.7,
+            "priority_threshold": 0.8
+        }
+    }',
+    
+    -- Activity tracking
+    last_login_at TIMESTAMP WITH TIME ZONE,
+    login_count INTEGER DEFAULT 0,
+    
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Email Accounts 表
+-- User sessions table (for JWT token management)
+CREATE TABLE IF NOT EXISTS user_sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    refresh_token VARCHAR(512) NOT NULL,
+    user_agent TEXT,
+    ip_address INET,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Email Accounts table (Enhanced with better sync management)
 CREATE TABLE IF NOT EXISTS email_accounts (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  provider VARCHAR(20) NOT NULL CHECK (provider IN ('microsoft', 'gmail', 'exchange')),
-  email VARCHAR(255) NOT NULL,
-  display_name VARCHAR(255) NOT NULL,
-  is_connected BOOLEAN DEFAULT true,
-  last_sync_at TIMESTAMP WITH TIME ZONE,
-  sync_status VARCHAR(20) DEFAULT 'idle' CHECK (sync_status IN ('idle', 'syncing', 'error')),
-  error_message TEXT,
-  folder_structure JSONB DEFAULT '{}',
-  sync_settings JSONB DEFAULT '{}',
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  UNIQUE(user_id, email)
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    provider VARCHAR(20) NOT NULL CHECK (provider IN ('microsoft', 'gmail', 'exchange', 'imap')),
+    email VARCHAR(255) NOT NULL,
+    display_name VARCHAR(255) NOT NULL,
+    is_connected BOOLEAN DEFAULT true,
+    is_primary BOOLEAN DEFAULT false,
+    
+    -- Enhanced synchronization tracking
+    last_sync_at TIMESTAMP WITH TIME ZONE,
+    next_sync_at TIMESTAMP WITH TIME ZONE,
+    sync_status VARCHAR(20) DEFAULT 'idle' CHECK (sync_status IN ('idle', 'syncing', 'error', 'paused')),
+    sync_progress INTEGER DEFAULT 0, -- 0-100 percentage
+    error_message TEXT,
+    error_count INTEGER DEFAULT 0,
+    
+    -- Configuration and structure
+    folder_structure JSONB DEFAULT '{}',
+    sync_settings JSONB DEFAULT '{
+        "sync_interval": 300,
+        "folders": ["INBOX", "Sent Items", "Drafts"],
+        "max_emails_per_sync": 100,
+        "sync_attachments": false,
+        "auto_analysis": true
+    }',
+    
+    -- OAuth tokens (should be encrypted in production)
+    access_token TEXT,
+    refresh_token TEXT,
+    token_expires_at TIMESTAMP WITH TIME ZONE,
+    
+    -- Statistics
+    total_emails INTEGER DEFAULT 0,
+    unread_emails INTEGER DEFAULT 0,
+    last_email_date TIMESTAMP WITH TIME ZONE,
+    
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    
+    UNIQUE(user_id, email)
 );
 
--- Email Messages 表
+-- Email Folders table (For folder structure management)
+CREATE TABLE IF NOT EXISTS email_folders (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    account_id UUID NOT NULL REFERENCES email_accounts(id) ON DELETE CASCADE,
+    folder_id VARCHAR(255) NOT NULL, -- Provider-specific folder ID
+    name VARCHAR(255) NOT NULL,
+    display_name VARCHAR(255) NOT NULL,
+    parent_id UUID REFERENCES email_folders(id) ON DELETE CASCADE,
+    folder_type VARCHAR(50) DEFAULT 'custom' CHECK (folder_type IN ('inbox', 'sent', 'drafts', 'trash', 'spam', 'custom')),
+    is_system BOOLEAN DEFAULT false,
+    email_count INTEGER DEFAULT 0,
+    unread_count INTEGER DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    
+    UNIQUE(account_id, folder_id)
+);
+
+-- Sync Operations tracking table
+CREATE TABLE IF NOT EXISTS sync_operations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    account_id UUID NOT NULL REFERENCES email_accounts(id) ON DELETE CASCADE,
+    operation_type VARCHAR(50) NOT NULL CHECK (operation_type IN ('full_sync', 'incremental_sync', 'folder_sync')),
+    status VARCHAR(20) NOT NULL CHECK (status IN ('pending', 'running', 'completed', 'failed', 'cancelled')),
+    started_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    completed_at TIMESTAMP WITH TIME ZONE,
+    
+    -- Progress tracking
+    total_items INTEGER DEFAULT 0,
+    processed_items INTEGER DEFAULT 0,
+    failed_items INTEGER DEFAULT 0,
+    
+    -- Configuration and results
+    sync_config JSONB DEFAULT '{}',
+    error_details TEXT,
+    result_summary JSONB DEFAULT '{}',
+    
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Email Messages table (Core email data storage)
 CREATE TABLE IF NOT EXISTS email_messages (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  account_id UUID NOT NULL REFERENCES email_accounts(id) ON DELETE CASCADE,
-  message_id VARCHAR(255) NOT NULL,
-  thread_id VARCHAR(255),
-  subject TEXT NOT NULL,
-  from_data JSONB NOT NULL,
-  to_data JSONB NOT NULL,
-  cc_data JSONB,
-  bcc_data JSONB,
-  received_at TIMESTAMP WITH TIME ZONE NOT NULL,
-  body_text TEXT,
-  body_html TEXT,
-  has_attachments BOOLEAN DEFAULT false,
-  is_read BOOLEAN DEFAULT false,
-  importance VARCHAR(10) DEFAULT 'normal' CHECK (importance IN ('high', 'normal', 'low')),
-  categories TEXT[] DEFAULT '{}',
-  folder_path VARCHAR(500) NOT NULL,
-  raw_data JSONB,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  UNIQUE(user_id, message_id)
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    account_id UUID NOT NULL REFERENCES email_accounts(id) ON DELETE CASCADE,
+    folder_id UUID REFERENCES email_folders(id) ON DELETE SET NULL,
+    
+    -- Provider-specific identifiers
+    message_id VARCHAR(512) NOT NULL, -- Provider message ID
+    internet_message_id VARCHAR(512), -- Standard Message-ID header
+    thread_id VARCHAR(255),
+    conversation_id VARCHAR(255),
+    
+    -- Basic email fields
+    subject TEXT NOT NULL DEFAULT '',
+    sender_email VARCHAR(255) NOT NULL,
+    sender_name VARCHAR(255) DEFAULT '',
+    recipients JSONB DEFAULT '[]', -- Array of {email, name, type} objects
+    cc_recipients JSONB DEFAULT '[]',
+    bcc_recipients JSONB DEFAULT '[]',
+    
+    -- Content
+    body_text TEXT DEFAULT '',
+    body_html TEXT DEFAULT '',
+    preview_text TEXT DEFAULT '',
+    
+    -- Metadata
+    importance VARCHAR(10) DEFAULT 'normal' CHECK (importance IN ('low', 'normal', 'high')),
+    sensitivity VARCHAR(20) DEFAULT 'normal' CHECK (sensitivity IN ('normal', 'personal', 'private', 'confidential')),
+    is_read BOOLEAN DEFAULT false,
+    is_flagged BOOLEAN DEFAULT false,
+    is_draft BOOLEAN DEFAULT false,
+    has_attachments BOOLEAN DEFAULT false,
+    attachment_count INTEGER DEFAULT 0,
+    
+    -- Timestamps
+    sent_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    received_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    
+    -- Analysis status
+    analysis_status VARCHAR(20) DEFAULT 'pending' CHECK (analysis_status IN ('pending', 'processing', 'completed', 'failed', 'skipped')),
+    analysis_updated_at TIMESTAMP WITH TIME ZONE,
+    
+    UNIQUE(account_id, message_id)
 );
 
--- Email Analysis 表  
-CREATE TABLE IF NOT EXISTS email_analysis (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  email_id UUID NOT NULL REFERENCES email_messages(id) ON DELETE CASCADE,
-  analysis_version VARCHAR(20) NOT NULL DEFAULT '1.0',
-  sentiment_data JSONB NOT NULL,
-  priority_data JSONB NOT NULL,
-  category_data JSONB NOT NULL,
-  keywords TEXT[] DEFAULT '{}',
-  entities_data JSONB DEFAULT '[]',
-  summary TEXT NOT NULL,
-  suggested_actions_data JSONB DEFAULT '[]',
-  processing_time INTEGER NOT NULL,
-  analyzed_at TIMESTAMP WITH TIME ZONE NOT NULL,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  UNIQUE(email_id)
+-- Email Analysis Cache table (AI Analysis Results)
+CREATE TABLE IF NOT EXISTS email_analysis_cache (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    message_id UUID NOT NULL REFERENCES email_messages(id) ON DELETE CASCADE,
+    
+    -- Analysis results
+    sentiment_score DECIMAL(3,2) CHECK (sentiment_score >= -1 AND sentiment_score <= 1), -- -1 to 1
+    sentiment_label VARCHAR(20) CHECK (sentiment_label IN ('negative', 'neutral', 'positive')),
+    priority_score DECIMAL(3,2) CHECK (priority_score >= 0 AND priority_score <= 1), -- 0 to 1
+    priority_label VARCHAR(10) CHECK (priority_label IN ('low', 'medium', 'high', 'urgent')),
+    
+    -- Content analysis
+    keywords JSONB DEFAULT '[]', -- Array of extracted keywords
+    entities JSONB DEFAULT '[]', -- Array of named entities
+    topics JSONB DEFAULT '[]', -- Array of identified topics
+    language_detected VARCHAR(10) DEFAULT 'en',
+    
+    -- Classification
+    category VARCHAR(100), -- Auto-detected category
+    is_spam BOOLEAN DEFAULT false,
+    spam_score DECIMAL(3,2),
+    is_promotional BOOLEAN DEFAULT false,
+    is_automated BOOLEAN DEFAULT false,
+    
+    -- Business context
+    urgency_indicators JSONB DEFAULT '[]', -- Array of urgency signals found
+    action_required BOOLEAN DEFAULT false,
+    estimated_response_time INTEGER, -- in minutes
+    
+    -- Analysis metadata
+    model_version VARCHAR(50),
+    analysis_date TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    analysis_duration_ms INTEGER,
+    confidence_score DECIMAL(3,2),
+    
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    
+    UNIQUE(message_id)
 );
 
--- Filter Rules 表
+-- Filter Rules table (Smart Email Filtering)
 CREATE TABLE IF NOT EXISTS filter_rules (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  name VARCHAR(255) NOT NULL,
-  description TEXT,
-  conditions JSONB NOT NULL,
-  actions JSONB NOT NULL,
-  is_active BOOLEAN DEFAULT true,
-  priority INTEGER DEFAULT 0,
-  execution_count INTEGER DEFAULT 0,
-  last_executed_at TIMESTAMP WITH TIME ZONE,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    
+    -- Rule configuration
+    is_enabled BOOLEAN DEFAULT true,
+    priority INTEGER DEFAULT 0, -- Higher number = higher priority
+    rule_type VARCHAR(20) DEFAULT 'custom' CHECK (rule_type IN ('system', 'template', 'custom', 'ai_generated')),
+    
+    -- Conditions (JSON structure for flexible conditions)
+    conditions JSONB NOT NULL DEFAULT '{}', -- Complex condition logic
+    /*
+    Example conditions structure:
+    {
+        "operator": "AND", // AND, OR
+        "rules": [
+            {
+                "field": "sender_email",
+                "operator": "contains",
+                "value": "@important-client.com"
+            },
+            {
+                "field": "subject",
+                "operator": "contains",
+                "value": "urgent"
+            }
+        ]
+    }
+    */
+    
+    -- Actions to take when conditions are met
+    actions JSONB NOT NULL DEFAULT '[]', -- Array of actions to execute
+    /*
+    Example actions structure:
+    [
+        {
+            "type": "add_tag",
+            "params": {"tag": "urgent"}
+        },
+        {
+            "type": "move_to_folder",
+            "params": {"folder": "High Priority"}
+        }
+    ]
+    */
+    
+    -- Statistics
+    match_count INTEGER DEFAULT 0,
+    execution_count INTEGER DEFAULT 0,
+    last_matched_at TIMESTAMP WITH TIME ZONE,
+    last_executed_at TIMESTAMP WITH TIME ZONE,
+    
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Rule Execution Log 表
-CREATE TABLE IF NOT EXISTS rule_execution_log (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  rule_id UUID NOT NULL REFERENCES filter_rules(id) ON DELETE CASCADE,
-  email_id UUID NOT NULL REFERENCES email_messages(id) ON DELETE CASCADE,
-  status VARCHAR(20) NOT NULL CHECK (status IN ('success', 'failure', 'skipped')),
-  execution_time INTEGER NOT NULL,
-  conditions_matched JSONB,
-  actions_executed JSONB,
-  error_message TEXT,
-  executed_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+-- Filter Rule Executions table (Execution history)
+CREATE TABLE IF NOT EXISTS filter_rule_executions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    rule_id UUID NOT NULL REFERENCES filter_rules(id) ON DELETE CASCADE,
+    message_id UUID NOT NULL REFERENCES email_messages(id) ON DELETE CASCADE,
+    
+    execution_status VARCHAR(20) NOT NULL CHECK (execution_status IN ('success', 'failed', 'partial')),
+    actions_executed JSONB DEFAULT '[]', -- Which actions were executed
+    error_details TEXT,
+    execution_duration_ms INTEGER,
+    
+    executed_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Reports 表
-CREATE TABLE IF NOT EXISTS reports (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  title VARCHAR(255) NOT NULL,
-  description TEXT,
-  report_type VARCHAR(50) NOT NULL,
-  status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'generating', 'completed', 'failed')),
-  format TEXT[] NOT NULL,
-  parameters JSONB DEFAULT '{}',
-  date_range JSONB NOT NULL,
-  file_paths TEXT[],
-  statistics JSONB,
-  template_id UUID,
-  scheduled_at TIMESTAMP WITH TIME ZONE,
-  completed_at TIMESTAMP WITH TIME ZONE,
-  error_message TEXT,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+-- Workflow Integrations table (Third-party integrations)
+CREATE TABLE IF NOT EXISTS workflow_integrations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    integration_type VARCHAR(50) NOT NULL CHECK (integration_type IN ('jira', 'trello', 'asana', 'slack', 'teams', 'webhook')),
+    name VARCHAR(255) NOT NULL,
+    
+    -- Connection configuration
+    is_enabled BOOLEAN DEFAULT true,
+    connection_config JSONB NOT NULL DEFAULT '{}', -- API keys, URLs, etc.
+    
+    -- Mapping configuration
+    field_mappings JSONB DEFAULT '{}', -- How to map email data to integration fields
+    
+    -- Statistics
+    total_exports INTEGER DEFAULT 0,
+    successful_exports INTEGER DEFAULT 0,
+    last_export_at TIMESTAMP WITH TIME ZONE,
+    
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    
+    UNIQUE(user_id, integration_type, name)
 );
 
--- Report Templates 表
+-- Report Generations table (Generation history)
+CREATE TABLE IF NOT EXISTS report_generations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    template_id UUID REFERENCES report_templates(id) ON DELETE SET NULL,
+    scheduled_report_id UUID REFERENCES scheduled_reports(id) ON DELETE SET NULL,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    
+    -- Generation details
+    report_name VARCHAR(255) NOT NULL,
+    generation_type VARCHAR(20) NOT NULL CHECK (generation_type IN ('manual', 'scheduled', 'api')),
+    status VARCHAR(20) NOT NULL CHECK (status IN ('pending', 'generating', 'completed', 'failed')),
+    
+    -- Parameters and results
+    parameters JSONB DEFAULT '{}', -- Generation parameters
+    file_path TEXT, -- Generated file location
+    file_size INTEGER, -- File size in bytes
+    file_format VARCHAR(10), -- pdf, xlsx, csv, etc.
+    
+    -- Timing and performance
+    started_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    completed_at TIMESTAMP WITH TIME ZONE,
+    generation_duration_ms INTEGER,
+    
+    -- Error handling
+    error_message TEXT,
+    retry_count INTEGER DEFAULT 0,
+    
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Report Templates table
 CREATE TABLE IF NOT EXISTS report_templates (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name VARCHAR(255) NOT NULL,
-  description TEXT,
-  category VARCHAR(100) NOT NULL,
-  report_type VARCHAR(50) NOT NULL,
-  is_system BOOLEAN DEFAULT false,
-  is_active BOOLEAN DEFAULT true,
-  configuration JSONB NOT NULL,
-  default_parameters JSONB DEFAULT '{}',
-  layout_config JSONB,
-  chart_configs JSONB,
-  usage_count INTEGER DEFAULT 0,
-  created_by UUID REFERENCES users(id),
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    
+    -- Template configuration
+    template_type VARCHAR(50) NOT NULL CHECK (template_type IN ('daily', 'weekly', 'monthly', 'custom', 'real_time')),
+    is_system_template BOOLEAN DEFAULT false,
+    is_public BOOLEAN DEFAULT false,
+    
+    -- Report configuration
+    data_sources JSONB NOT NULL DEFAULT '[]', -- Which data to include
+    filters JSONB DEFAULT '{}', -- Data filtering criteria
+    charts JSONB DEFAULT '[]', -- Chart configurations
+    
+    -- Scheduling
+    schedule_enabled BOOLEAN DEFAULT false,
+    schedule_config JSONB DEFAULT '{}', -- Cron-like schedule configuration
+    
+    -- Usage statistics
+    usage_count INTEGER DEFAULT 0,
+    last_generated_at TIMESTAMP WITH TIME ZONE,
+    
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Report Schedules 表
-CREATE TABLE IF NOT EXISTS report_schedules (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  template_id UUID REFERENCES report_templates(id),
-  name VARCHAR(255) NOT NULL,
-  description TEXT,
-  cron_expression VARCHAR(255) NOT NULL,
-  timezone VARCHAR(100) DEFAULT 'UTC',
-  status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'inactive', 'paused')),
-  parameters JSONB DEFAULT '{}',
-  notification_settings JSONB DEFAULT '{}',
-  last_run_at TIMESTAMP WITH TIME ZONE,
-  next_run_at TIMESTAMP WITH TIME ZONE,
-  last_status VARCHAR(20),
-  run_count INTEGER DEFAULT 0,
-  success_count INTEGER DEFAULT 0,
-  failure_count INTEGER DEFAULT 0,
-  retention_days INTEGER DEFAULT 30,
-  is_active BOOLEAN DEFAULT true,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+-- Scheduled Reports table
+CREATE TABLE IF NOT EXISTS scheduled_reports (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    template_id UUID NOT NULL REFERENCES report_templates(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    
+    -- Schedule configuration
+    name VARCHAR(255) NOT NULL,
+    is_enabled BOOLEAN DEFAULT true,
+    schedule_expression VARCHAR(100) NOT NULL, -- Cron expression
+    timezone VARCHAR(50) DEFAULT 'UTC',
+    
+    -- Delivery configuration
+    delivery_method VARCHAR(20) DEFAULT 'email' CHECK (delivery_method IN ('email', 'webhook', 'file_export')),
+    delivery_config JSONB DEFAULT '{}', -- Recipients, webhook URLs, etc.
+    
+    -- Execution tracking
+    last_run_at TIMESTAMP WITH TIME ZONE,
+    next_run_at TIMESTAMP WITH TIME ZONE,
+    run_count INTEGER DEFAULT 0,
+    failure_count INTEGER DEFAULT 0,
+    last_error TEXT,
+    
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 -- =============================================
--- 2. 创建高性能索引
+-- 2. 索引优化 (高性能查询关键)
 -- =============================================
 
 -- Users 表索引

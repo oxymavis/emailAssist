@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>获取 Trello Token</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #0079bf 0%, #026aa7 100%);
+            min-height: 100vh;
+        }
+        .container {
+            background: white;
+            border-radius: 10px;
+            padding: 30px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+        }
+        h1 {
+            color: #172b4d;
+            border-bottom: 2px solid #0079bf;
+            padding-bottom: 10px;
+        }
+        .api-key-display {
+            background: #f4f5f7;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+            font-family: monospace;
+            word-break: break-all;
+        }
+        .button-container {
+            margin: 30px 0;
+            text-align: center;
+        }
+        button {
+            background: #0079bf;
+            color: white;
+            padding: 15px 40px;
+            border: none;
+            border-radius: 5px;
+            font-size: 18px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        button:hover {
+            background: #026aa7;
+        }
+        .info-box {
+            background: #ebf3fb;
+            border-left: 4px solid #0079bf;
+            padding: 15px;
+            margin: 20px 0;
+        }
+        .warning-box {
+            background: #fff5e6;
+            border-left: 4px solid #ff9f1a;
+            padding: 15px;
+            margin: 20px 0;
+        }
+        .success-box {
+            background: #e6f7e6;
+            border-left: 4px solid #5ba425;
+            padding: 15px;
+            margin: 20px 0;
+        }
+        ol li {
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔑 获取 Trello API Token</h1>
+        
+        <div class="info-box">
+            <h3>📋 您的 API Key</h3>
+            <div class="api-key-display">
+                6f058eeac873f1b902f1f2f482554397
+            </div>
+        </div>
+
+        <div class="button-container">
+            <button onclick="getTrelloToken()">
+                🚀 点击这里授权并获取 Token
+            </button>
+        </div>
+
+        <div class="info-box">
+            <h3>📝 获取 Token 的步骤：</h3>
+            <ol>
+                <li>点击上面的按钮，将打开 Trello 授权页面</li>
+                <li>登录您的 Trello 账户（如果尚未登录）</li>
+                <li>点击 "Allow" 授权 Email Assist 访问您的 Trello</li>
+                <li>授权成功后，页面会显示一个很长的 Token</li>
+                <li>复制整个 Token（64 个字符）</li>
+                <li>将 Token 保存到安全的地方</li>
+            </ol>
+        </div>
+
+        <div class="warning-box">
+            <h3>⚠️ 重要提醒：</h3>
+            <ul>
+                <li>Token 相当于密码，请妥善保管</li>
+                <li>不要将 Token 分享给他人或提交到公开代码库</li>
+                <li>Token 设置为永不过期，但您可以随时在 Trello 设置中撤销</li>
+            </ul>
+        </div>
+
+        <div class="success-box">
+            <h3>✅ 获取 Token 后：</h3>
+            <p>将 Token 更新到 <code>backend/.env</code> 文件中：</p>
+            <div class="api-key-display">
+TRELLO_API_KEY=6f058eeac873f1b902f1f2f482554397
+TRELLO_API_TOKEN=您获取的64位Token
+TRELLO_BOARD_ID=hSqfthYt
+            </div>
+        </div>
+
+        <div class="info-box">
+            <h3>🧪 测试 Token：</h3>
+            <p>获取 Token 后，可以使用以下命令测试：</p>
+            <div class="api-key-display">
+curl "https://api.trello.com/1/members/me?key=6f058eeac873f1b902f1f2f482554397&token=YOUR_TOKEN"
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function getTrelloToken() {
+            const apiKey = '6f058eeac873f1b902f1f2f482554397';
+            const appName = 'Email Assist';
+            const scope = 'read,write,account';
+            const expiration = 'never';
+            
+            const authUrl = `https://trello.com/1/authorize?` +
+                `key=${apiKey}&` +
+                `name=${encodeURIComponent(appName)}&` +
+                `scope=${scope}&` +
+                `expiration=${expiration}&` +
+                `response_type=token`;
+            
+            console.log('授权URL:', authUrl);
+            
+            // 在新窗口打开授权页面
+            window.open(authUrl, '_blank');
+        }
+    </script>
+</body>
+</html>

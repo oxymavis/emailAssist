@@ -231,6 +231,24 @@ export async function createTables(): Promise<void> {
       );
     `);
 
+    // Create Microsoft Auth Tokens table
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS microsoft_auth_tokens (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR(255) NOT NULL,
+        microsoft_id VARCHAR(255) NOT NULL,
+        email VARCHAR(255) NOT NULL,
+        access_token TEXT NOT NULL,
+        refresh_token TEXT,
+        expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+        scope TEXT,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        UNIQUE(user_id),
+        UNIQUE(email)
+      );
+    `);
+
     // Create Email Accounts table
     await db.query(`
       CREATE TABLE IF NOT EXISTS email_accounts (
@@ -254,6 +272,10 @@ export async function createTables(): Promise<void> {
     await db.query(`
       CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
       CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
+      CREATE INDEX IF NOT EXISTS idx_microsoft_auth_tokens_user_id ON microsoft_auth_tokens(user_id);
+      CREATE INDEX IF NOT EXISTS idx_microsoft_auth_tokens_email ON microsoft_auth_tokens(email);
+      CREATE INDEX IF NOT EXISTS idx_microsoft_auth_tokens_microsoft_id ON microsoft_auth_tokens(microsoft_id);
+      CREATE INDEX IF NOT EXISTS idx_microsoft_auth_tokens_expires_at ON microsoft_auth_tokens(expires_at);
       CREATE INDEX IF NOT EXISTS idx_email_accounts_user_id ON email_accounts(user_id);
       CREATE INDEX IF NOT EXISTS idx_email_accounts_provider ON email_accounts(provider);
       CREATE INDEX IF NOT EXISTS idx_email_accounts_is_connected ON email_accounts(is_connected);
@@ -284,6 +306,12 @@ export async function createTables(): Promise<void> {
       DROP TRIGGER IF EXISTS update_users_updated_at ON users;
       CREATE TRIGGER update_users_updated_at 
         BEFORE UPDATE ON users 
+        FOR EACH ROW 
+        EXECUTE PROCEDURE update_updated_at_column();
+        
+      DROP TRIGGER IF EXISTS update_microsoft_auth_tokens_updated_at ON microsoft_auth_tokens;
+      CREATE TRIGGER update_microsoft_auth_tokens_updated_at 
+        BEFORE UPDATE ON microsoft_auth_tokens 
         FOR EACH ROW 
         EXECUTE PROCEDURE update_updated_at_column();
     `);

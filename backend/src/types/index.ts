@@ -646,10 +646,11 @@ export interface EnvironmentConfig {
   RATE_LIMIT_MAX_REQUESTS: number;
   BCRYPT_ROUNDS: number;
   LOG_LEVEL: string;
-  OPENAI_API_KEY: string;
-  OPENAI_MODEL: string;
-  OPENAI_MAX_TOKENS: number;
-  OPENAI_TEMPERATURE: number;
+  DEEPSEEK_API_KEY: string;
+  DEEPSEEK_BASE_URL: string;
+  DEEPSEEK_MODEL: string;
+  DEEPSEEK_MAX_TOKENS: number;
+  DEEPSEEK_TEMPERATURE: number;
   AI_ANALYSIS_CACHE_TTL: number;
   AI_BATCH_SIZE: number;
   AI_ANALYSIS_TIMEOUT: number;

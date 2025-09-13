@@ -270,18 +270,14 @@ app.get('/api/workflows', (req, res) => {
   });
 });
 
+// Microsoft Graph API - 使用真实的OAuth路由
+const microsoftAuthRouter = require('./src/routes/microsoft-auth');
+app.use('/api/auth', microsoftAuthRouter.default || microsoftAuthRouter);
+
 // Microsoft Graph API 模拟
 app.get('/api/graph/auth-url', (req, res) => {
-  res.json({
-    success: true,
-    data: {
-      authUrl: 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=test&response_type=code&redirect_uri=http://localhost:3000/auth/callback&scope=https://graph.microsoft.com/Mail.Read'
-    },
-    meta: {
-      timestamp: new Date().toISOString(),
-      requestId: 'get-auth-url'
-    }
-  });
+  // 重定向到新的Microsoft认证端点
+  res.redirect('/api/auth/microsoft');
 });
 
 // 404 处理

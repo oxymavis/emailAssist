@@ -1,12 +1,12 @@
 /**
  * AI Analysis Service
- * 集成OpenAI API进行邮件内容智能分析
+ * 集成DeepSeek API进行邮件内容智能分析
  */
 
 import OpenAI from 'openai';
 import natural from 'natural';
 import compromise from 'compromise';
-import config, { OPENAI_CONFIG, AI_CONFIG } from '@/config';
+import config, { DEEPSEEK_CONFIG, AI_CONFIG } from '@/config';
 import logger from '@/utils/logger';
 import {
   SentimentAnalysis,
@@ -49,7 +49,8 @@ export class AIAnalysisService {
 
   constructor() {
     this.openai = new OpenAI({
-      apiKey: OPENAI_CONFIG.API_KEY,
+      apiKey: DEEPSEEK_CONFIG.API_KEY,
+      baseURL: DEEPSEEK_CONFIG.BASE_URL,
     });
     
     // 初始化自然语言处理工具
@@ -176,10 +177,10 @@ export class AIAnalysisService {
       `;
 
       const response = await this.openai.chat.completions.create({
-        model: OPENAI_CONFIG.MODEL,
+        model: DEEPSEEK_CONFIG.MODEL,
         messages: [{ role: 'user', content: prompt }],
-        max_tokens: OPENAI_CONFIG.MAX_TOKENS,
-        temperature: OPENAI_CONFIG.TEMPERATURE,
+        max_tokens: DEEPSEEK_CONFIG.MAX_TOKENS,
+        temperature: DEEPSEEK_CONFIG.TEMPERATURE,
       });
 
       const result = JSON.parse(response.choices[0].message.content || '{}');
@@ -246,10 +247,10 @@ export class AIAnalysisService {
       `;
 
       const response = await this.openai.chat.completions.create({
-        model: OPENAI_CONFIG.MODEL,
+        model: DEEPSEEK_CONFIG.MODEL,
         messages: [{ role: 'user', content: prompt }],
-        max_tokens: OPENAI_CONFIG.MAX_TOKENS,
-        temperature: OPENAI_CONFIG.TEMPERATURE,
+        max_tokens: DEEPSEEK_CONFIG.MAX_TOKENS,
+        temperature: DEEPSEEK_CONFIG.TEMPERATURE,
       });
 
       const result = JSON.parse(response.choices[0].message.content || '{}');
@@ -299,10 +300,10 @@ export class AIAnalysisService {
       `;
 
       const response = await this.openai.chat.completions.create({
-        model: OPENAI_CONFIG.MODEL,
+        model: DEEPSEEK_CONFIG.MODEL,
         messages: [{ role: 'user', content: prompt }],
-        max_tokens: OPENAI_CONFIG.MAX_TOKENS,
-        temperature: OPENAI_CONFIG.TEMPERATURE,
+        max_tokens: DEEPSEEK_CONFIG.MAX_TOKENS,
+        temperature: DEEPSEEK_CONFIG.TEMPERATURE,
       });
 
       const result = JSON.parse(response.choices[0].message.content || '{}');
@@ -386,10 +387,10 @@ export class AIAnalysisService {
       `;
 
       const response = await this.openai.chat.completions.create({
-        model: OPENAI_CONFIG.MODEL,
+        model: DEEPSEEK_CONFIG.MODEL,
         messages: [{ role: 'user', content: prompt }],
-        max_tokens: OPENAI_CONFIG.MAX_TOKENS,
-        temperature: OPENAI_CONFIG.TEMPERATURE,
+        max_tokens: DEEPSEEK_CONFIG.MAX_TOKENS,
+        temperature: DEEPSEEK_CONFIG.TEMPERATURE,
       });
 
       const result = JSON.parse(response.choices[0].message.content || '[]');
@@ -428,7 +429,7 @@ export class AIAnalysisService {
       `;
 
       const response = await this.openai.chat.completions.create({
-        model: OPENAI_CONFIG.MODEL,
+        model: DEEPSEEK_CONFIG.MODEL,
         messages: [{ role: 'user', content: prompt }],
         max_tokens: 100,
         temperature: 0.3,
@@ -483,10 +484,10 @@ export class AIAnalysisService {
       `;
 
       const response = await this.openai.chat.completions.create({
-        model: OPENAI_CONFIG.MODEL,
+        model: DEEPSEEK_CONFIG.MODEL,
         messages: [{ role: 'user', content: prompt }],
-        max_tokens: OPENAI_CONFIG.MAX_TOKENS,
-        temperature: OPENAI_CONFIG.TEMPERATURE,
+        max_tokens: DEEPSEEK_CONFIG.MAX_TOKENS,
+        temperature: DEEPSEEK_CONFIG.TEMPERATURE,
       });
 
       const result = JSON.parse(response.choices[0].message.content || '[]');

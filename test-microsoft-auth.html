@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Microsoft OAuth 测试</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #0078d4 0%, #00bcf2 100%);
+            min-height: 100vh;
+        }
+        .container {
+            background: white;
+            border-radius: 10px;
+            padding: 30px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #0078d4;
+            border-bottom: 2px solid #0078d4;
+            padding-bottom: 10px;
+        }
+        .config-display {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        button {
+            background: #0078d4;
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            margin: 10px 5px;
+        }
+        button:hover {
+            background: #106ebe;
+        }
+        .success {
+            background: #d4edda;
+            color: #155724;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .info {
+            background: #d1ecf1;
+            color: #0c5460;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .test-result {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f1f3f5;
+            border-radius: 5px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔐 Microsoft OAuth 认证测试</h1>
+        
+        <div class="info">
+            <h3>📋 当前配置</h3>
+            <div class="config-display">
+Client ID: 55f8ecbf-9d0b-48ce-9ad6-0034d724f02f
+Tenant ID: dff4a01d-082b-4a86-b524-146d0607ac33
+Redirect URI: http://localhost:3001/api/auth/microsoft/callback
+            </div>
+        </div>
+
+        <div class="info">
+            <h3>🧪 测试步骤</h3>
+            <ol>
+                <li>点击"开始认证"按钮</li>
+                <li>登录您的 Microsoft 账户</li>
+                <li>授权应用访问您的邮箱</li>
+                <li>查看认证结果</li>
+            </ol>
+        </div>
+
+        <div style="text-align: center; margin: 30px 0;">
+            <button onclick="startAuth()">
+                🚀 开始 Microsoft 认证
+            </button>
+            <button onclick="testDirectAuth()">
+                🔗 直接测试认证 URL
+            </button>
+        </div>
+
+        <div id="test-result" class="test-result"></div>
+
+        <div class="info">
+            <h3>📝 手动测试</h3>
+            <p>如果按钮不工作，可以直接访问以下 URL：</p>
+            <div class="config-display" id="auth-url" style="word-break: break-all;"></div>
+        </div>
+    </div>
+
+    <script>
+        // 配置信息
+        const config = {
+            clientId: '55f8ecbf-9d0b-48ce-9ad6-0034d724f02f',
+            tenantId: 'dff4a01d-082b-4a86-b524-146d0607ac33',
+            redirectUri: 'http://localhost:3001/api/auth/microsoft/callback',
+            scopes: [
+                'openid',
+                'profile',
+                'email',
+                'offline_access',
+                'https://graph.microsoft.com/Mail.Read',
+                'https://graph.microsoft.com/Mail.Send',
+                'https://graph.microsoft.com/User.Read'
+            ]
+        };
+
+        // 生成认证 URL
+        function generateAuthUrl() {
+            const baseUrl = `https://login.microsoftonline.com/${config.tenantId}/oauth2/v2.0/authorize`;
+            const params = new URLSearchParams({
+                client_id: config.clientId,
+                response_type: 'code',
+                redirect_uri: config.redirectUri,
+                response_mode: 'query',
+                scope: config.scopes.join(' '),
+                state: 'email-assist-test-' + Date.now()
+            });
+            return `${baseUrl}?${params}`;
+        }
+
+        // 开始认证
+        function startAuth() {
+            const authUrl = 'http://localhost:3001/api/auth/microsoft';
+            showResult('info', '正在跳转到后端认证端点...');
+            
+            // 使用新窗口打开，避免影响当前页面
+            const authWindow = window.open(authUrl, 'microsoft-auth', 'width=500,height=700');
+            
+            // 监听认证结果
+            const checkInterval = setInterval(() => {
+                try {
+                    if (authWindow && authWindow.closed) {
+                        clearInterval(checkInterval);
+                        showResult('success', '认证窗口已关闭，请检查是否成功');
+                    }
+                } catch (e) {
+                    // 跨域错误，忽略
+                }
+            }, 1000);
+        }
+
+        // 直接测试认证 URL
+        function testDirectAuth() {
+            const authUrl = generateAuthUrl();
+            document.getElementById('auth-url').textContent = authUrl;
+            showResult('info', '正在打开 Microsoft 认证页面...');
+            window.open(authUrl, '_blank');
+        }
+
+        // 显示结果
+        function showResult(type, message) {
+            const resultDiv = document.getElementById('test-result');
+            resultDiv.style.display = 'block';
+            resultDiv.className = `test-result ${type}`;
+            resultDiv.innerHTML = `
+                <strong>${type === 'success' ? '✅' : type === 'error' ? '❌' : 'ℹ️'} ${message}</strong>
+                <br>
+                <small>时间: ${new Date().toLocaleString()}</small>
+            `;
+        }
+
+        // 页面加载时显示认证 URL
+        window.onload = function() {
+            const authUrl = generateAuthUrl();
+            document.getElementById('auth-url').textContent = authUrl;
+            
+            // 检查 URL 参数，看是否从回调返回
+            const urlParams = new URLSearchParams(window.location.search);
+            if (urlParams.has('code')) {
+                showResult('success', '认证成功！已获取授权码: ' + urlParams.get('code').substring(0, 20) + '...');
+            } else if (urlParams.has('error')) {
+                showResult('error', '认证失败: ' + urlParams.get('error_description'));
+            }
+        };
+
+        // 监听来自其他窗口的消息
+        window.addEventListener('message', function(event) {
+            if (event.data && event.data.type === 'auth-success') {
+                showResult('success', '认证成功！用户: ' + event.data.email);
+            } else if (event.data && event.data.type === 'auth-error') {
+                showResult('error', '认证失败: ' + event.data.error);
+            }
+        });
+    </script>
+</body>
+</html>

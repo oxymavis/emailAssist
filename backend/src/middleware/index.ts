@@ -468,3 +468,7 @@ export const healthCheck = async (req: Request, res: Response): Promise<void> =>
     });
   }
 };
+
+// Export auth middleware
+export * from './auth';
+export * from './microsoftAuth';

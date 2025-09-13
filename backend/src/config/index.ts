@@ -75,11 +75,12 @@ class Config {
       // Logging
       LOG_LEVEL: process.env.LOG_LEVEL || 'info',
       
-      // OpenAI Configuration
-      OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
-      OPENAI_MODEL: process.env.OPENAI_MODEL || 'gpt-4-1106-preview',
-      OPENAI_MAX_TOKENS: parseInt(process.env.OPENAI_MAX_TOKENS || '2000', 10),
-      OPENAI_TEMPERATURE: parseFloat(process.env.OPENAI_TEMPERATURE || '0.1'),
+      // DeepSeek AI Configuration
+      DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY || '',
+      DEEPSEEK_BASE_URL: process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com/v1',
+      DEEPSEEK_MODEL: process.env.DEEPSEEK_MODEL || 'deepseek-chat',
+      DEEPSEEK_MAX_TOKENS: parseInt(process.env.DEEPSEEK_MAX_TOKENS || '2000', 10),
+      DEEPSEEK_TEMPERATURE: parseFloat(process.env.DEEPSEEK_TEMPERATURE || '0.1'),
       
       // AI Analysis Configuration
       AI_ANALYSIS_CACHE_TTL: parseInt(process.env.AI_ANALYSIS_CACHE_TTL || '3600', 10),
@@ -175,12 +176,16 @@ export const MICROSOFT_CONFIG = {
   SCOPES: Config.getInstance().microsoftScopes
 };
 
-export const OPENAI_CONFIG = {
-  API_KEY: Config.getInstance().env.OPENAI_API_KEY,
-  MODEL: Config.getInstance().env.OPENAI_MODEL,
-  MAX_TOKENS: Config.getInstance().env.OPENAI_MAX_TOKENS,
-  TEMPERATURE: Config.getInstance().env.OPENAI_TEMPERATURE
+export const DEEPSEEK_CONFIG = {
+  API_KEY: Config.getInstance().env.DEEPSEEK_API_KEY,
+  BASE_URL: Config.getInstance().env.DEEPSEEK_BASE_URL,
+  MODEL: Config.getInstance().env.DEEPSEEK_MODEL,
+  MAX_TOKENS: Config.getInstance().env.DEEPSEEK_MAX_TOKENS,
+  TEMPERATURE: Config.getInstance().env.DEEPSEEK_TEMPERATURE
 };
+
+// Legacy support for OpenAI config (backward compatibility)
+export const OPENAI_CONFIG = DEEPSEEK_CONFIG;
 
 export const AI_CONFIG = {
   CACHE_TTL: Config.getInstance().env.AI_ANALYSIS_CACHE_TTL,

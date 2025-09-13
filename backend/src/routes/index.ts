@@ -5,6 +5,7 @@ import { API_CONFIG } from '@/config';
 import { healthCheck } from '@/middleware';
 // 逐步启用路由，现在添加邮件处理、分析、规则引擎和演示
 import authRoutes from './auth';
+import microsoftAuthRoutes from './microsoft-auth';
 import emailServiceRoutes from './email';
 import analysisRoutes from './analysis';
 import rulesRoutes from './rules';
@@ -72,6 +73,7 @@ router.get('/', (req, res) => {
   try {
     console.log('📊 Mounting auth routes...');
     router.use('/auth', authRoutes);
+    router.use('/auth', microsoftAuthRoutes); // 添加 Microsoft 认证路由
     console.log('✅ Auth routes mounted successfully');
     
     console.log('📧 Mounting email service routes...');
