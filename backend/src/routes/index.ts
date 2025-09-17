@@ -12,8 +12,11 @@ import rulesRoutes from './rules';
 import demoRoutes from './demo';
 import { createReportsRoutes } from './reports';
 import performanceRoutes from './performance';
-import cacheManagementRoutes from './cacheManagement';
-import monitoringRoutes from './monitoring';
+// import cacheManagementRoutes from './cacheManagement'; // temporarily disabled
+// import monitoringRoutes from './monitoring'; // temporarily disabled
+import { createNotificationRoutes } from './notifications';
+// import integrationsRoutes from './integrations'; // temporarily disabled
+import workflowsRoutes from './workflows';
 
 // Create a function to setup routes with database connections
 export function createRoutes(db: Pool, redis: typeof RedisManager): Router {
@@ -50,6 +53,9 @@ router.get('/', (req, res) => {
         performance: `${API_CONFIG.BASE_PATH}/performance`,
         cache: `${API_CONFIG.BASE_PATH}/cache`,
         monitoring: `${API_CONFIG.BASE_PATH}/monitoring`,
+        notifications: `${API_CONFIG.BASE_PATH}/notifications`,
+        integrations: `${API_CONFIG.BASE_PATH}/integrations`,
+        workflows: `${API_CONFIG.BASE_PATH}/workflows`,
         health: '/health'
       }
     },
@@ -99,14 +105,26 @@ router.get('/', (req, res) => {
     console.log('🚀 Mounting performance routes...');
     router.use('/performance', performanceRoutes);
     console.log('✅ Performance routes mounted successfully');
-    
-    console.log('💾 Mounting cache management routes...');
-    router.use('/cache', cacheManagementRoutes);
-    console.log('✅ Cache management routes mounted successfully');
-    
-    console.log('📊 Mounting monitoring routes...');
-    router.use('/monitoring', monitoringRoutes);
-    console.log('✅ Monitoring routes mounted successfully');
+
+    // console.log('🔗 Mounting integrations routes...');
+    // router.use('/integrations', integrationsRoutes);
+    // console.log('✅ Integrations routes mounted successfully');
+
+    console.log('⚙️ Mounting workflows routes...');
+    router.use('/workflows', workflowsRoutes);
+    console.log('✅ Workflows routes mounted successfully');
+
+    // console.log('💾 Mounting cache management routes...');
+    // router.use('/cache', cacheManagementRoutes);
+    // console.log('✅ Cache management routes mounted successfully');
+
+    // console.log('📊 Mounting monitoring routes...');
+    // router.use('/monitoring', monitoringRoutes);
+    // console.log('✅ Monitoring routes mounted successfully');
+
+    // Note: Notification routes will be mounted during service initialization
+    // This is because they require NotificationService to be fully initialized
+    console.log('🔔 Notification routes will be mounted during service initialization');
   } catch (error) {
     console.error('❌ Error mounting routes:', error);
     throw error;
@@ -141,6 +159,9 @@ defaultRouter.get('/', (req, res) => {
         performance: `${API_CONFIG.BASE_PATH}/performance`,
         cache: `${API_CONFIG.BASE_PATH}/cache`,
         monitoring: `${API_CONFIG.BASE_PATH}/monitoring`,
+        notifications: `${API_CONFIG.BASE_PATH}/notifications`,
+        integrations: `${API_CONFIG.BASE_PATH}/integrations`,
+        workflows: `${API_CONFIG.BASE_PATH}/workflows`,
         health: '/health'
       }
     },

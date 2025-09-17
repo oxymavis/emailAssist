@@ -1,46 +1,68 @@
-/**
- * Jira Integration Service
- * Handles integration with Atlassian Jira
- */
-
 import axios, { AxiosInstance } from 'axios';
-import logger from '@/utils/logger';
-import { EmailMessage } from '@/types';
+import Integration from '../../models/Integration';
+import WorkflowTask, { WorkflowTaskAttributes } from '../../models/WorkflowTask';
+import logger from '../../utils/logger';
 
-export interface JiraConfig {
-  host: string; // e.g., 'your-domain.atlassian.net'
-  email: string;
-  apiToken: string;
-  projectKey: string;
-  defaultIssueType?: string;
-  defaultPriority?: string;
-}
-
+/**
+ * Jira API response types
+ * Jira API 响应类型定义
+ */
 export interface JiraIssue {
-  id?: string;
-  key?: string;
+  id: string;
+  key: string;
+  self: string;
   fields: {
     project: {
+      id: string;
       key: string;
+      name: string;
     };
     summary: string;
-    description: any; // Atlassian Document Format (ADF)
+    description?: any; // Atlassian Document Format (ADF)
     issuetype: {
+      id: string;
       name: string;
+      iconUrl: string;
+    };
+    status: {
+      id: string;
+      name: string;
+      statusCategory: {
+        id: number;
+        name: string;
+        colorName: string;
+      };
     };
     priority?: {
+      id: string;
       name: string;
+      iconUrl: string;
     };
     assignee?: {
       accountId: string;
+      displayName: string;
+      emailAddress?: string;
+      avatarUrls?: {
+        '16x16': string;
+        '24x24': string;
+        '32x32': string;
+        '48x48': string;
+      };
     };
     reporter?: {
       accountId: string;
+      displayName: string;
+      emailAddress?: string;
     };
-    labels?: string[];
-    components?: Array<{ name: string }>;
+    labels: string[];
+    components: Array<{
+      id: string;
+      name: string;
+    }>;
     duedate?: string;
-    customfield?: Record<string, any>;
+    created: string;
+    updated: string;
+    resolutiondate?: string;
   };
 }
 
@@ -48,7 +70,18 @@ export interface JiraProject {
   id: string;
   key: string;
   name: string;
+  description?: string;
   projectTypeKey: string;
+  lead?: {
+    accountId: string;
+    displayName: string;
+  };
+  avatarUrls?: {
+    '16x16': string;
+    '24x24': string;
+    '32x32': string;
+    '48x48': string;
+  };
 }
 
 export interface JiraUser {
@@ -56,6 +89,15 @@ export interface JiraUser {
   displayName: string;
   emailAddress: string;
   active: boolean;
+  timeZone?: string;
+}
+
+export interface JiraIssueType {
+  id: string;
+  name: string;
+  description: string;
+  iconUrl: string;
+  subtask: boolean;
 }
 
 export interface JiraTransition {
@@ -64,562 +106,816 @@ export interface JiraTransition {
   to: {
     id: string;
     name: string;
+    statusCategory: {
+      id: number;
+      name: string;
+      colorName: string;
+    };
   };
 }
 
-export class JiraIntegration {
+export interface JiraPriority {
+  id: string;
+  name: string;
+  iconUrl: string;
+  description?: string;
+}
+
+/**
+ * Jira Integration Service
+ * Jira 集成服务
+ *
+ * 基于 Atlassian Jira REST API v3 实现的第三方工作流集成
+ * - API Token 认证支持
+ * - 问题创建和管理
+ * - 项目管理
+ * - 双向同步支持
+ *
+ * Features:
+ * - API Token 认证
+ * - 问题CRUD操作
+ * - 项目和用户管理
+ * - 状态转换管理
+ * - 标签和优先级支持
+ */
+export class JiraIntegrationService {
   private apiClient: AxiosInstance;
-  private config: JiraConfig;
-  
-  constructor(config: JiraConfig) {
-    this.config = config;
-    
-    const auth = Buffer.from(`${config.email}:${config.apiToken}`).toString('base64');
-    
-    this.apiClient = axios.create({
-      baseURL: `https://${config.host}/rest/api/3`,
+  private integration: Integration;
+
+  constructor(integration: Integration) {
+    this.integration = integration;
+    this.apiClient = this.createApiClient();
+  }
+
+  /**
+   * Create authenticated API client
+   * 创建已认证的 API 客户端
+   */
+  private createApiClient(): AxiosInstance {
+    const { credentials } = this.integration;
+
+    if (!credentials.apiUrl || !credentials.apiKey || !credentials.accessToken) {
+      throw new Error('Jira credentials not configured (missing apiUrl, email, or apiToken)');
+    }
+
+    // Create Basic Auth header
+    const auth = Buffer.from(`${credentials.apiKey}:${credentials.accessToken}`).toString('base64');
+
+    const client = axios.create({
+      baseURL: `${credentials.apiUrl}/rest/api/3`,
+      timeout: 30000,
       headers: {
         'Authorization': `Basic ${auth}`,
         'Accept': 'application/json',
         'Content-Type': 'application/json'
-      },
-      timeout: 15000
+      }
     });
-    
-    // Add interceptors
-    this.apiClient.interceptors.request.use(
+
+    // Request interceptor for logging
+    client.interceptors.request.use(
       (config) => {
-        logger.debug('Jira API request', { 
-          method: config.method,
-          url: config.url 
-        });
+        logger.info(`Jira API Request: ${config.method?.toUpperCase()} ${config.url}`);
         return config;
       },
       (error) => {
-        logger.error('Jira API request error', error);
+        logger.error('Jira API Request Error:', error);
         return Promise.reject(error);
       }
     );
-    
-    this.apiClient.interceptors.response.use(
+
+    // Response interceptor for error handling
+    client.interceptors.response.use(
       (response) => {
-        logger.debug('Jira API response', { 
-          status: response.status 
-        });
+        logger.info(`Jira API Response: ${response.status} ${response.config.url}`);
         return response;
       },
-      (error) => {
-        logger.error('Jira API error', { 
+      async (error) => {
+        logger.error('Jira API Response Error:', {
+          url: error.config?.url,
           status: error.response?.status,
-          message: error.response?.data?.errorMessages 
+          data: error.response?.data
         });
+
+        // Handle specific Jira errors
+        if (error.response?.status === 401) {
+          await this.integration.markError('Jira authentication failed - check email and API token');
+        } else if (error.response?.status === 403) {
+          await this.integration.markError('Jira access denied - check permissions');
+        } else if (error.response?.status === 404) {
+          await this.integration.markError('Jira resource not found - check project configuration');
+        } else if (error.response?.status >= 500) {
+          logger.warn('Jira server error - will retry later');
+        }
+
         return Promise.reject(error);
       }
     );
+
+    return client;
   }
-  
+
   /**
-   * Test Jira connection
+   * Test connection to Jira
+   * 测试 Jira 连接
    */
-  async testConnection(): Promise<boolean> {
+  async testConnection(): Promise<{ success: boolean; error?: string }> {
     try {
       const response = await this.apiClient.get('/myself');
-      logger.info('Jira connection successful', { 
-        user: response.data.displayName 
-      });
-      return true;
+
+      if (response.data && response.data.accountId) {
+        await this.integration.clearError();
+        logger.info(`Jira connection test successful for user: ${response.data.displayName}`);
+        return { success: true };
+      } else {
+        const error = 'Invalid Jira API response';
+        await this.integration.markError(error);
+        return { success: false, error };
+      }
     } catch (error) {
-      logger.error('Jira connection failed', error);
-      return false;
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      logger.error('Jira connection test failed:', errorMessage);
+      await this.integration.markError(`Connection test failed: ${errorMessage}`);
+      return { success: false, error: errorMessage };
     }
   }
-  
+
   /**
-   * Get all projects
+   * Get current user information
+   * 获取当前用户信息
+   */
+  async getCurrentUser(): Promise<JiraUser> {
+    try {
+      const response = await this.apiClient.get('/myself');
+      return response.data;
+    } catch (error) {
+      logger.error('Failed to fetch Jira user info:', error);
+      throw new Error(`Failed to fetch user info: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Get all accessible projects
+   * 获取所有可访问的项目
    */
   async getProjects(): Promise<JiraProject[]> {
     try {
       const response = await this.apiClient.get('/project');
       return response.data;
     } catch (error) {
-      logger.error('Failed to get Jira projects', error);
-      throw error;
+      logger.error('Failed to fetch Jira projects:', error);
+      throw new Error(`Failed to fetch projects: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
-  
+
   /**
-   * Get project issue types
+   * Get project details
+   * 获取项目详情
    */
-  async getProjectIssueTypes(projectKey?: string): Promise<any[]> {
+  async getProject(projectKey: string): Promise<JiraProject> {
     try {
-      const key = projectKey || this.config.projectKey;
-      const response = await this.apiClient.get(`/project/${key}/statuses`);
+      const response = await this.apiClient.get(`/project/${projectKey}`);
       return response.data;
     } catch (error) {
-      logger.error('Failed to get project issue types', error);
-      throw error;
+      logger.error(`Failed to fetch Jira project ${projectKey}:`, error);
+      throw new Error(`Failed to fetch project: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
-  
+
   /**
-   * Create issue from email
+   * Get issue types for project
+   * 获取项目的问题类型
    */
-  async createIssueFromEmail(
-    email: EmailMessage,
-    options: {
-      issueType?: string;
-      priority?: string;
-      assignee?: string;
-      labels?: string[];
-      components?: string[];
-      dueDate?: Date;
-      customFields?: Record<string, any>;
-    } = {}
-  ): Promise<JiraIssue> {
+  async getProjectIssueTypes(projectKey: string): Promise<JiraIssueType[]> {
     try {
-      const issue: JiraIssue = {
+      const response = await this.apiClient.get(`/project/${projectKey}/statuses`);
+      // Extract unique issue types from the response
+      const issueTypesMap = new Map();
+      response.data.forEach((statusGroup: any) => {
+        statusGroup.issueTypes.forEach((issueType: JiraIssueType) => {
+          issueTypesMap.set(issueType.id, issueType);
+        });
+      });
+      return Array.from(issueTypesMap.values());
+    } catch (error) {
+      logger.error(`Failed to fetch issue types for project ${projectKey}:`, error);
+      throw new Error(`Failed to fetch issue types: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Get priorities
+   * 获取优先级列表
+   */
+  async getPriorities(): Promise<JiraPriority[]> {
+    try {
+      const response = await this.apiClient.get('/priority');
+      return response.data;
+    } catch (error) {
+      logger.error('Failed to fetch Jira priorities:', error);
+      throw new Error(`Failed to fetch priorities: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Get users assignable to project
+   * 获取项目可分配用户
+   */
+  async getAssignableUsers(projectKey: string): Promise<JiraUser[]> {
+    try {
+      const response = await this.apiClient.get('/user/assignable/search', {
+        params: {
+          project: projectKey,
+          maxResults: 50
+        }
+      });
+      return response.data;
+    } catch (error) {
+      logger.error(`Failed to fetch assignable users for project ${projectKey}:`, error);
+      throw new Error(`Failed to fetch assignable users: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Create a new issue
+   * 创建新问题
+   */
+  async createIssue(params: {
+    projectKey: string;
+    summary: string;
+    description?: string;
+    issueTypeId?: string;
+    priorityId?: string;
+    assigneeId?: string;
+    reporterId?: string;
+    labels?: string[];
+    components?: string[];
+    dueDate?: string;
+    customFields?: { [key: string]: any };
+  }): Promise<JiraIssue> {
+    try {
+      const issueData: any = {
         fields: {
           project: {
-            key: this.config.projectKey
+            key: params.projectKey
           },
-          summary: this.truncateSummary(email.subject || 'Email Issue'),
-          description: this.formatEmailToADF(email),
+          summary: params.summary,
           issuetype: {
-            name: options.issueType || this.config.defaultIssueType || 'Task'
+            id: params.issueTypeId || '10001' // Default Task type
           }
         }
       };
-      
+
+      // Add description in ADF format if provided
+      if (params.description) {
+        issueData.fields.description = this.convertToADF(params.description);
+      }
+
       // Add optional fields
-      if (options.priority || this.config.defaultPriority) {
-        issue.fields.priority = {
-          name: options.priority || this.config.defaultPriority || 'Medium'
-        };
+      if (params.priorityId) {
+        issueData.fields.priority = { id: params.priorityId };
       }
-      
-      if (options.assignee) {
-        issue.fields.assignee = {
-          accountId: options.assignee
-        };
+
+      if (params.assigneeId) {
+        issueData.fields.assignee = { accountId: params.assigneeId };
       }
-      
-      if (options.labels && options.labels.length > 0) {
-        issue.fields.labels = options.labels;
+
+      if (params.reporterId) {
+        issueData.fields.reporter = { accountId: params.reporterId };
       }
-      
-      if (options.components && options.components.length > 0) {
-        issue.fields.components = options.components.map(c => ({ name: c }));
+
+      if (params.labels && params.labels.length > 0) {
+        issueData.fields.labels = params.labels;
       }
-      
-      if (options.dueDate) {
-        issue.fields.duedate = options.dueDate.toISOString().split('T')[0];
+
+      if (params.components && params.components.length > 0) {
+        issueData.fields.components = params.components.map(id => ({ id }));
       }
-      
+
+      if (params.dueDate) {
+        issueData.fields.duedate = params.dueDate;
+      }
+
       // Add custom fields
-      if (options.customFields) {
-        Object.entries(options.customFields).forEach(([key, value]) => {
-          issue.fields[key] = value;
+      if (params.customFields) {
+        Object.entries(params.customFields).forEach(([key, value]) => {
+          issueData.fields[key] = value;
         });
       }
-      
-      // Create the issue
-      const response = await this.apiClient.post('/issue', issue);
-      
-      logger.info('Jira issue created from email', { 
-        issueKey: response.data.key,
-        emailId: email.id 
+
+      const response = await this.apiClient.post('/issue', issueData);
+
+      logger.info(`Created Jira issue: ${response.data.key} - ${params.summary}`);
+      await this.integration.updateStatistics({
+        totalTasksCreated: this.integration.statistics.totalTasksCreated + 1
       });
-      
-      // Add email as attachment if possible
-      if (response.data.id) {
-        await this.addEmailAsComment(response.data.id, email);
-      }
-      
+
       return response.data;
     } catch (error) {
-      logger.error('Failed to create Jira issue from email', { 
-        emailId: email.id,
-        error 
-      });
-      throw error;
+      logger.error('Failed to create Jira issue:', error);
+      throw new Error(`Failed to create issue: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
-  
+
   /**
-   * Create multiple issues from emails (batch)
+   * Update existing issue
+   * 更新现有问题
    */
-  async createIssuesFromEmails(
-    emails: EmailMessage[],
-    options?: any
-  ): Promise<JiraIssue[]> {
-    const issues: JiraIssue[] = [];
-    
-    for (const email of emails) {
-      try {
-        const issue = await this.createIssueFromEmail(email, options);
-        issues.push(issue);
-        
-        // Add delay to respect rate limits
-        await new Promise(resolve => setTimeout(resolve, 500));
-      } catch (error) {
-        logger.error('Failed to create issue for email', { 
-          emailId: email.id,
-          error 
+  async updateIssue(issueKey: string, updates: {
+    summary?: string;
+    description?: string;
+    priorityId?: string;
+    assigneeId?: string;
+    labels?: string[];
+    dueDate?: string;
+    customFields?: { [key: string]: any };
+  }): Promise<JiraIssue> {
+    try {
+      const updateData: any = { fields: {} };
+
+      if (updates.summary !== undefined) updateData.fields.summary = updates.summary;
+      if (updates.description !== undefined) {
+        updateData.fields.description = this.convertToADF(updates.description);
+      }
+      if (updates.priorityId !== undefined) updateData.fields.priority = { id: updates.priorityId };
+      if (updates.assigneeId !== undefined) updateData.fields.assignee = { accountId: updates.assigneeId };
+      if (updates.labels !== undefined) updateData.fields.labels = updates.labels;
+      if (updates.dueDate !== undefined) updateData.fields.duedate = updates.dueDate;
+
+      // Add custom fields
+      if (updates.customFields) {
+        Object.entries(updates.customFields).forEach(([key, value]) => {
+          updateData.fields[key] = value;
         });
       }
-    }
-    
-    logger.info('Batch issue creation completed', { 
-      total: emails.length,
-      successful: issues.length 
-    });
-    
-    return issues;
-  }
-  
-  /**
-   * Update issue
-   */
-  async updateIssue(issueIdOrKey: string, updates: Partial<JiraIssue['fields']>): Promise<void> {
-    try {
-      await this.apiClient.put(`/issue/${issueIdOrKey}`, { fields: updates });
-      
-      logger.info('Jira issue updated', { issueIdOrKey });
-    } catch (error) {
-      logger.error('Failed to update Jira issue', { issueIdOrKey, error });
-      throw error;
-    }
-  }
-  
-  /**
-   * Add comment to issue
-   */
-  async addComment(issueIdOrKey: string, comment: string): Promise<void> {
-    try {
-      const body = {
-        body: {
-          type: 'doc',
-          version: 1,
-          content: [
-            {
-              type: 'paragraph',
-              content: [
-                {
-                  type: 'text',
-                  text: comment
-                }
-              ]
-            }
-          ]
-        }
-      };
-      
-      await this.apiClient.post(`/issue/${issueIdOrKey}/comment`, body);
-      
-      logger.info('Comment added to Jira issue', { issueIdOrKey });
-    } catch (error) {
-      logger.error('Failed to add comment to Jira issue', { issueIdOrKey, error });
-      throw error;
-    }
-  }
-  
-  /**
-   * Add email content as comment
-   */
-  async addEmailAsComment(issueIdOrKey: string, email: EmailMessage): Promise<void> {
-    try {
-      const comment = this.formatEmailForComment(email);
-      await this.addComment(issueIdOrKey, comment);
-    } catch (error) {
-      logger.error('Failed to add email as comment', { 
-        issueIdOrKey,
-        emailId: email.id,
-        error 
+
+      await this.apiClient.put(`/issue/${issueKey}`, updateData);
+
+      logger.info(`Updated Jira issue: ${issueKey}`);
+      await this.integration.updateStatistics({
+        totalTasksUpdated: this.integration.statistics.totalTasksUpdated + 1
       });
+
+      // Fetch and return updated issue
+      return await this.getIssue(issueKey);
+    } catch (error) {
+      logger.error(`Failed to update Jira issue ${issueKey}:`, error);
+      throw new Error(`Failed to update issue: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
-  
+
+  /**
+   * Get issue details
+   * 获取问题详情
+   */
+  async getIssue(issueKey: string): Promise<JiraIssue> {
+    try {
+      const response = await this.apiClient.get(`/issue/${issueKey}`);
+      return response.data;
+    } catch (error) {
+      logger.error(`Failed to fetch Jira issue ${issueKey}:`, error);
+      throw new Error(`Failed to fetch issue: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Delete issue
+   * 删除问题
+   */
+  async deleteIssue(issueKey: string): Promise<void> {
+    try {
+      await this.apiClient.delete(`/issue/${issueKey}`);
+      logger.info(`Deleted Jira issue: ${issueKey}`);
+    } catch (error) {
+      logger.error(`Failed to delete Jira issue ${issueKey}:`, error);
+      throw new Error(`Failed to delete issue: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
   /**
    * Get issue transitions
+   * 获取问题可用转换
    */
-  async getTransitions(issueIdOrKey: string): Promise<JiraTransition[]> {
+  async getTransitions(issueKey: string): Promise<JiraTransition[]> {
     try {
-      const response = await this.apiClient.get(`/issue/${issueIdOrKey}/transitions`);
+      const response = await this.apiClient.get(`/issue/${issueKey}/transitions`);
       return response.data.transitions;
     } catch (error) {
-      logger.error('Failed to get issue transitions', { issueIdOrKey, error });
-      throw error;
+      logger.error(`Failed to get transitions for issue ${issueKey}:`, error);
+      throw new Error(`Failed to get transitions: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
-  
+
   /**
-   * Transition issue
+   * Transition issue to new status
+   * 转换问题状态
    */
-  async transitionIssue(issueIdOrKey: string, transitionId: string): Promise<void> {
+  async transitionIssue(issueKey: string, transitionId: string, comment?: string): Promise<void> {
     try {
-      await this.apiClient.post(`/issue/${issueIdOrKey}/transitions`, {
+      const transitionData: any = {
         transition: { id: transitionId }
+      };
+
+      if (comment) {
+        transitionData.update = {
+          comment: [{
+            add: {
+              body: this.convertToADF(comment)
+            }
+          }]
+        };
+      }
+
+      await this.apiClient.post(`/issue/${issueKey}/transitions`, transitionData);
+      logger.info(`Transitioned Jira issue ${issueKey} with transition ${transitionId}`);
+    } catch (error) {
+      logger.error(`Failed to transition issue ${issueKey}:`, error);
+      throw new Error(`Failed to transition issue: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Add comment to issue
+   * 为问题添加评论
+   */
+  async addComment(issueKey: string, comment: string): Promise<void> {
+    try {
+      const commentData = {
+        body: this.convertToADF(comment)
+      };
+
+      await this.apiClient.post(`/issue/${issueKey}/comment`, commentData);
+      logger.info(`Added comment to Jira issue: ${issueKey}`);
+    } catch (error) {
+      logger.error(`Failed to add comment to issue ${issueKey}:`, error);
+      throw new Error(`Failed to add comment: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Create workflow task from email analysis
+   * 从邮件分析创建工作流任务
+   */
+  async createTaskFromEmail(params: {
+    emailId: string;
+    emailSubject: string;
+    emailFrom: string;
+    emailDate: Date;
+    priority: 'low' | 'medium' | 'high' | 'critical';
+    description?: string;
+    assignee?: string;
+    dueDate?: Date | null;
+  }): Promise<WorkflowTaskAttributes> {
+    try {
+      const { configuration } = this.integration;
+      const projectKey = configuration.defaultProject;
+
+      if (!projectKey) {
+        throw new Error('No default project configured for Jira integration');
+      }
+
+      // Prepare issue data
+      const issueSummary = configuration.taskTemplate
+        ? configuration.taskTemplate.replace('{subject}', params.emailSubject)
+        : `Email Issue: ${params.emailSubject}`;
+
+      const issueDescription = params.description ||
+        `Issue created from email:\n\nFrom: ${params.emailFrom}\nDate: ${params.emailDate.toISOString()}\nSubject: ${params.emailSubject}`;
+
+      // Map priority
+      const priorityMap = {
+        'low': '4',      // Low
+        'medium': '3',   // Medium
+        'high': '2',     // High
+        'critical': '1'  // Highest
+      };
+
+      // Create the Jira issue
+      const jiraIssue = await this.createIssue({
+        projectKey,
+        summary: issueSummary,
+        description: issueDescription,
+        issueTypeId: (configuration as any).defaultIssueType,
+        priorityId: priorityMap[params.priority],
+        assigneeId: params.assignee || configuration.defaultAssignee,
+        labels: configuration.defaultLabels || ['email-task'],
+        dueDate: params.dueDate ? params.dueDate.toISOString().split('T')[0] : undefined
       });
-      
-      logger.info('Jira issue transitioned', { issueIdOrKey, transitionId });
-    } catch (error) {
-      logger.error('Failed to transition Jira issue', { issueIdOrKey, error });
-      throw error;
-    }
-  }
-  
-  /**
-   * Search issues
-   */
-  async searchIssues(jql: string, maxResults = 50): Promise<JiraIssue[]> {
-    try {
-      const response = await this.apiClient.post('/search', {
-        jql,
-        maxResults,
-        fields: ['summary', 'status', 'assignee', 'priority', 'created', 'updated']
+
+      // Create workflow task record
+      const workflowTask = await WorkflowTask.create({
+        emailId: params.emailId,
+        integrationId: this.integration.id,
+        externalTaskId: jiraIssue.key,
+        title: issueSummary,
+        description: issueDescription,
+        priority: params.priority,
+        assignee: params.assignee || null,
+        status: 'created',
+        externalUrl: `${this.integration.credentials.apiUrl}/browse/${jiraIssue.key}`,
+        labels: configuration.defaultLabels || [],
+        dueDate: params.dueDate,
+        metadata: {
+          emailSubject: params.emailSubject,
+          emailFrom: params.emailFrom,
+          emailDate: params.emailDate,
+          integrationSpecific: {
+            projectKey,
+            issueId: jiraIssue.id,
+            issueKey: jiraIssue.key
+          }
+        },
+        syncStatus: 'synced',
+        lastSyncAt: new Date()
       });
-      
-      return response.data.issues;
+
+      logger.info(`Created workflow task ${workflowTask.id} from email ${params.emailId}`);
+      return workflowTask;
+
     } catch (error) {
-      logger.error('Failed to search Jira issues', { jql, error });
-      throw error;
+      logger.error('Failed to create task from email:', error);
+      throw new Error(`Failed to create task from email: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
-  
+
   /**
-   * Get issue by email ID
+   * Sync workflow task with Jira issue
+   * 同步工作流任务与 Jira 问题
    */
-  async getIssueByEmailId(emailId: string): Promise<JiraIssue | null> {
+  async syncTask(task: WorkflowTaskAttributes): Promise<void> {
     try {
-      const jql = `text ~ "Email ID: ${emailId}" AND project = ${this.config.projectKey}`;
-      const issues = await this.searchIssues(jql, 1);
-      
-      return issues.length > 0 ? issues[0] : null;
+      const jiraIssue = await this.getIssue(task.externalTaskId);
+
+      // Map Jira status to workflow status
+      let taskStatus: WorkflowTaskAttributes['status'];
+      const statusCategory = jiraIssue.fields.status.statusCategory.name.toLowerCase();
+
+      switch (statusCategory) {
+        case 'done':
+          taskStatus = 'completed';
+          break;
+        case 'in progress':
+          taskStatus = 'in_progress';
+          break;
+        case 'to do':
+        default:
+          taskStatus = 'created';
+          break;
+      }
+
+      // Extract assignee
+      const assignee = jiraIssue.fields.assignee ? jiraIssue.fields.assignee.displayName : null;
+
+      // Extract labels
+      const labels = jiraIssue.fields.labels || [];
+
+      // Extract due date
+      const dueDate = jiraIssue.fields.duedate ? new Date(jiraIssue.fields.duedate) : null;
+
+      // Update workflow task
+      await (task as any).updateFromExternal({
+        title: jiraIssue.fields.summary,
+        description: this.extractTextFromADF(jiraIssue.fields.description),
+        status: taskStatus,
+        assignee,
+        labels,
+        dueDate
+      });
+
+      logger.info(`Synced workflow task ${task.id} with Jira issue ${task.externalTaskId}`);
+
     } catch (error) {
-      logger.error('Failed to get issue by email ID', { emailId, error });
-      return null;
+      const errorMessage = `Failed to sync task: ${error instanceof Error ? error.message : 'Unknown error'}`;
+      await (task as any).markSyncError(errorMessage);
+      logger.error(`Sync error for task ${task.id}:`, error);
+      throw new Error(errorMessage);
     }
   }
-  
+
   /**
-   * Create webhook
+   * Sync all pending tasks for this integration
+   * 同步此集成的所有待处理任务
    */
-  async createWebhook(
-    name: string,
-    url: string,
-    events: string[] = ['jira:issue_created', 'jira:issue_updated']
-  ): Promise<string> {
+  async syncAllPendingTasks(): Promise<{ success: number; failed: number }> {
+    const stats = { success: 0, failed: 0 };
+
     try {
-      const response = await this.apiClient.post('/webhook', {
-        name,
-        url,
-        events,
-        filters: {
-          'issue-related-events-section': `project = ${this.config.projectKey}`
+      const pendingTasks = await WorkflowTask.findAll({
+        where: {
+          integrationId: this.integration.id,
+          syncStatus: ['pending', 'error']
         }
       });
-      
-      logger.info('Jira webhook created', { 
-        webhookId: response.data.id,
-        name 
-      });
-      
-      return response.data.id;
-    } catch (error) {
-      logger.error('Failed to create Jira webhook', error);
-      throw error;
-    }
-  }
-  
-  /**
-   * Delete webhook
-   */
-  async deleteWebhook(webhookId: string): Promise<void> {
-    try {
-      await this.apiClient.delete(`/webhook/${webhookId}`);
-      
-      logger.info('Jira webhook deleted', { webhookId });
-    } catch (error) {
-      logger.error('Failed to delete Jira webhook', { webhookId, error });
-      throw error;
-    }
-  }
-  
-  /**
-   * Get users assignable to project
-   */
-  async getAssignableUsers(projectKey?: string): Promise<JiraUser[]> {
-    try {
-      const key = projectKey || this.config.projectKey;
-      const response = await this.apiClient.get('/user/assignable/search', {
-        params: { project: key }
-      });
-      
-      return response.data;
-    } catch (error) {
-      logger.error('Failed to get assignable users', error);
-      throw error;
-    }
-  }
-  
-  /**
-   * Format email to Atlassian Document Format (ADF)
-   */
-  private formatEmailToADF(email: EmailMessage): any {
-    const content: any[] = [];
-    
-    // Add email metadata
-    content.push({
-      type: 'heading',
-      attrs: { level: 3 },
-      content: [{ type: 'text', text: 'Email Details' }]
-    });
-    
-    content.push({
-      type: 'paragraph',
-      content: [
-        { type: 'text', text: 'From: ', marks: [{ type: 'strong' }] },
-        { type: 'text', text: email.from?.email || 'Unknown' }
-      ]
-    });
-    
-    content.push({
-      type: 'paragraph',
-      content: [
-        { type: 'text', text: 'Date: ', marks: [{ type: 'strong' }] },
-        { type: 'text', text: email.receivedAt?.toLocaleString() || 'Unknown' }
-      ]
-    });
-    
-    if (email.to && email.to.length > 0) {
-      content.push({
-        type: 'paragraph',
-        content: [
-          { type: 'text', text: 'To: ', marks: [{ type: 'strong' }] },
-          { type: 'text', text: email.to.map(r => r.email).join(', ') }
-        ]
-      });
-    }
-    
-    // Add separator
-    content.push({ type: 'rule' });
-    
-    // Add email body
-    content.push({
-      type: 'heading',
-      attrs: { level: 3 },
-      content: [{ type: 'text', text: 'Email Content' }]
-    });
-    
-    // Split body into paragraphs
-    const bodyParagraphs = (email.body || 'No content').split('\n\n');
-    bodyParagraphs.forEach(paragraph => {
-      if (paragraph.trim()) {
-        content.push({
-          type: 'paragraph',
-          content: [{ type: 'text', text: paragraph }]
-        });
+
+      logger.info(`Found ${pendingTasks.length} pending tasks for Jira integration ${this.integration.id}`);
+
+      for (const task of pendingTasks) {
+        try {
+          await this.syncTask(task);
+          stats.success++;
+        } catch (error) {
+          stats.failed++;
+          logger.error(`Failed to sync task ${task.id}:`, error);
+        }
       }
-    });
-    
-    // Add email ID for reference
-    content.push({ type: 'rule' });
-    content.push({
+
+      // Update integration sync timestamp
+      this.integration.lastSyncAt = new Date();
+      await this.integration.save();
+
+      logger.info(`Jira sync completed: ${stats.success} success, ${stats.failed} failed`);
+
+    } catch (error) {
+      logger.error('Failed to sync pending Jira tasks:', error);
+      await this.integration.markError(`Bulk sync failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+
+    return stats;
+  }
+
+  /**
+   * Update task status in both local DB and Jira
+   * 在本地数据库和 Jira 中更新任务状态
+   */
+  async updateTaskStatus(taskId: string, status: WorkflowTaskAttributes['status']): Promise<void> {
+    try {
+      const task = await WorkflowTask.findByPk(taskId);
+      if (!task || task.integrationId !== this.integration.id) {
+        throw new Error('Task not found or does not belong to this integration');
+      }
+
+      // Get available transitions
+      const transitions = await this.getTransitions(task.externalTaskId);
+
+      // Map workflow status to Jira transition
+      let targetTransition: JiraTransition | undefined;
+
+      switch (status) {
+        case 'completed':
+          targetTransition = transitions.find(t =>
+            t.name.toLowerCase().includes('done') ||
+            t.name.toLowerCase().includes('close') ||
+            t.name.toLowerCase().includes('resolve')
+          );
+          break;
+        case 'in_progress':
+          targetTransition = transitions.find(t =>
+            t.name.toLowerCase().includes('progress') ||
+            t.name.toLowerCase().includes('start')
+          );
+          break;
+        case 'cancelled':
+          targetTransition = transitions.find(t =>
+            t.name.toLowerCase().includes('cancel') ||
+            t.name.toLowerCase().includes('reject')
+          );
+          break;
+      }
+
+      // Transition in Jira if mapping found
+      if (targetTransition) {
+        await this.transitionIssue(task.externalTaskId, targetTransition.id, `Status updated to: ${status}`);
+      }
+
+      // Update local task
+      // await task.updateStatus(status, false); // false = not from external
+
+      logger.info(`Updated task status: ${taskId} -> ${status}`);
+
+    } catch (error) {
+      logger.error(`Failed to update task status ${taskId}:`, error);
+      throw new Error(`Failed to update task status: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Convert text to Atlassian Document Format (ADF)
+   * 将文本转换为 Atlassian 文档格式
+   */
+  private convertToADF(text: string): any {
+    // Split text into paragraphs
+    const paragraphs = text.split('\n\n').filter(p => p.trim());
+
+    const content = paragraphs.map(paragraph => ({
       type: 'paragraph',
       content: [
-        { type: 'text', text: 'Email ID: ', marks: [{ type: 'strong' }] },
-        { type: 'text', text: email.id, marks: [{ type: 'code' }] }
+        {
+          type: 'text',
+          text: paragraph.trim()
+        }
       ]
-    });
-    
+    }));
+
     return {
       type: 'doc',
       version: 1,
-      content
+      content: content.length > 0 ? content : [{
+        type: 'paragraph',
+        content: [{ type: 'text', text: text }]
+      }]
     };
   }
-  
+
   /**
-   * Format email for comment
+   * Extract text from ADF format
+   * 从 ADF 格式提取文本
    */
-  private formatEmailForComment(email: EmailMessage): string {
-    const lines: string[] = [];
-    
-    lines.push('📧 **Email Reference**');
-    lines.push(`From: ${email.from?.email || 'Unknown'}`);
-    lines.push(`Date: ${email.receivedAt?.toLocaleString() || 'Unknown'}`);
-    lines.push(`Subject: ${email.subject || 'No subject'}`);
-    lines.push('');
-    lines.push('---');
-    lines.push('');
-    lines.push(email.body || 'No content');
-    lines.push('');
-    lines.push(`Email ID: ${email.id}`);
-    
-    return lines.join('\n');
+  private extractTextFromADF(adf: any): string {
+    if (!adf || !adf.content) return '';
+
+    const extractText = (node: any): string => {
+      if (node.type === 'text') {
+        return node.text || '';
+      }
+
+      if (node.content && Array.isArray(node.content)) {
+        return node.content.map(extractText).join('');
+      }
+
+      return '';
+    };
+
+    return adf.content.map(extractText).join('\n\n').trim();
   }
-  
+
   /**
-   * Truncate summary to Jira's limit
+   * Get integration configuration schema for frontend
+   * 获取前端集成配置结构
    */
-  private truncateSummary(summary: string, maxLength = 255): string {
-    if (summary.length <= maxLength) {
-      return summary;
-    }
-    
-    return summary.substring(0, maxLength - 3) + '...';
-  }
-  
-  /**
-   * Sync email status with Jira issue
-   */
-  async syncEmailStatus(
-    emailId: string,
-    status: 'read' | 'unread' | 'archived' | 'deleted'
-  ): Promise<void> {
-    try {
-      const issue = await this.getIssueByEmailId(emailId);
-      
-      if (!issue || !issue.key) {
-        logger.warn('No Jira issue found for email', { emailId });
-        return;
+  static getConfigurationSchema() {
+    return {
+      credentials: {
+        apiUrl: {
+          type: 'string',
+          required: true,
+          label: 'Jira Instance URL',
+          description: 'Your Jira instance URL (e.g., https://your-domain.atlassian.net)',
+          placeholder: 'https://your-domain.atlassian.net'
+        },
+        apiKey: {
+          type: 'string',
+          required: true,
+          label: 'Email Address',
+          description: 'Your Jira account email address'
+        },
+        accessToken: {
+          type: 'string',
+          required: true,
+          label: 'API Token',
+          description: 'API token for Jira integration',
+          sensitive: true
+        }
+      },
+      configuration: {
+        defaultProject: {
+          type: 'string',
+          required: true,
+          label: 'Default Project Key',
+          description: 'Default project key for new issues'
+        },
+        defaultIssueType: {
+          type: 'string',
+          required: false,
+          default: '10001',
+          label: 'Default Issue Type',
+          description: 'Default issue type ID for new issues'
+        },
+        defaultAssignee: {
+          type: 'string',
+          required: false,
+          label: 'Default Assignee',
+          description: 'Account ID of the default issue assignee'
+        },
+        taskTemplate: {
+          type: 'string',
+          required: false,
+          default: 'Email Issue: {subject}',
+          label: 'Issue Title Template',
+          description: 'Template for new issue titles. Use {subject} for email subject'
+        },
+        defaultLabels: {
+          type: 'array',
+          required: false,
+          default: ['email-task'],
+          label: 'Default Labels',
+          description: 'Default labels to apply to new issues'
+        },
+        autoSync: {
+          type: 'boolean',
+          required: false,
+          default: true,
+          label: 'Auto Sync',
+          description: 'Automatically sync issue updates'
+        },
+        syncInterval: {
+          type: 'number',
+          required: false,
+          default: 30,
+          label: 'Sync Interval (minutes)',
+          description: 'How often to sync with Jira'
+        }
       }
-      
-      // Get available transitions
-      const transitions = await this.getTransitions(issue.key);
-      
-      // Map email status to Jira transition
-      let targetTransition: JiraTransition | undefined;
-      
-      switch (status) {
-        case 'archived':
-        case 'deleted':
-          targetTransition = transitions.find(t => 
-            t.name.toLowerCase().includes('done') || 
-            t.name.toLowerCase().includes('closed')
-          );
-          break;
-        
-        case 'read':
-          targetTransition = transitions.find(t => 
-            t.name.toLowerCase().includes('progress') || 
-            t.name.toLowerCase().includes('review')
-          );
-          break;
-      }
-      
-      if (targetTransition) {
-        await this.transitionIssue(issue.key, targetTransition.id);
-        await this.addComment(issue.key, `Email status changed to: ${status}`);
-      }
-      
-      logger.info('Email status synced with Jira', { emailId, status, issueKey: issue.key });
-    } catch (error) {
-      logger.error('Failed to sync email status with Jira', { 
-        emailId,
-        status,
-        error 
-      });
-    }
+    };
   }
 }
+
+export default JiraIntegrationService;

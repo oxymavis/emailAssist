@@ -647,7 +647,7 @@ export class CachePerformanceOptimizer extends EventEmitter {
       this.mutexMap.set(key, mutex);
     }
     
-    const acquired = await mutex.acquire(this.config.mutexTimeout);
+    const acquired = await mutex.acquire();
     
     if (!acquired) {
       logger.warn('Mutex timeout', { key, timeout: this.config.mutexTimeout });

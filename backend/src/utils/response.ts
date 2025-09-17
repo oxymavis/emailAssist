@@ -249,3 +249,65 @@ export function formatErrorResponse(
 ): any {
   return (res: Response) => ResponseHandler.error(res, message, statusCode, code);
 }
+
+// Simple helper functions for controllers
+export function createSuccessResponse<T>(data?: T, meta?: any): any {
+  return {
+    success: true,
+    data,
+    meta: {
+      timestamp: new Date().toISOString(),
+      ...(meta || {})
+    }
+  };
+}
+
+export function createErrorResponse(
+  code: string,
+  message: string,
+  details?: any,
+  requestId?: string
+): any {
+  return {
+    success: false,
+    error: {
+      code,
+      message,
+      details: process.env.NODE_ENV === 'development' ? details : undefined
+    },
+    meta: {
+      timestamp: new Date().toISOString(),
+      requestId: requestId || uuidv4()
+    }
+  };
+}
+
+// Direct response functions for compatibility
+export function successResponse<T>(data?: T, message?: string): any {
+  return {
+    success: true,
+    data,
+    message,
+    meta: {
+      timestamp: new Date().toISOString()
+    }
+  };
+}
+
+export function errorResponse(
+  message: string,
+  code = 'INTERNAL_ERROR',
+  details?: any
+): any {
+  return {
+    success: false,
+    error: {
+      code,
+      message,
+      details: process.env.NODE_ENV === 'development' ? details : undefined
+    },
+    meta: {
+      timestamp: new Date().toISOString()
+    }
+  };
+}

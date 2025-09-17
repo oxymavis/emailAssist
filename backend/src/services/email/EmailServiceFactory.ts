@@ -6,8 +6,8 @@ import {
   OAuthConfig 
 } from '../../types';
 import { BaseEmailService } from './BaseEmailService';
-import { logger } from '../../utils/logger';
-import { config } from '../../config';
+import logger from '../../utils/logger';
+import config from '../../config';
 
 /**
  * 邮件服务工厂类
@@ -310,10 +310,10 @@ export class EmailServiceFactory {
     switch (provider) {
       case 'microsoft':
         return {
-          clientId: config.MICROSOFT_CLIENT_ID,
-          clientSecret: config.MICROSOFT_CLIENT_SECRET,
-          redirectUri: config.MICROSOFT_REDIRECT_URI,
-          scope: config.MICROSOFT_GRAPH_SCOPE,
+          clientId: config.env.MICROSOFT_CLIENT_ID,
+          clientSecret: config.env.MICROSOFT_CLIENT_SECRET,
+          redirectUri: config.env.MICROSOFT_REDIRECT_URI,
+          scope: config.env.MICROSOFT_GRAPH_SCOPE,
           authUrl: providerConfig.endpoints.auth!,
           tokenUrl: providerConfig.endpoints.token!,
           userInfoUrl: `${providerConfig.endpoints.api}/me`
@@ -321,10 +321,10 @@ export class EmailServiceFactory {
 
       case 'gmail':
         return {
-          clientId: config.GOOGLE_CLIENT_ID,
-          clientSecret: config.GOOGLE_CLIENT_SECRET,
-          redirectUri: config.GOOGLE_REDIRECT_URI,
-          scope: config.GOOGLE_GMAIL_SCOPE,
+          clientId: config.env.GOOGLE_CLIENT_ID,
+          clientSecret: config.env.GOOGLE_CLIENT_SECRET,
+          redirectUri: config.env.GOOGLE_REDIRECT_URI,
+          scope: config.env.GOOGLE_GMAIL_SCOPE,
           authUrl: providerConfig.endpoints.auth!,
           tokenUrl: providerConfig.endpoints.token!,
           userInfoUrl: 'https://www.googleapis.com/oauth2/v2/userinfo'

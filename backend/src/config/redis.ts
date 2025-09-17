@@ -369,6 +369,88 @@ class RedisManager {
   public async incr(key: string): Promise<number | null> {
     return this.increment(key, 1);
   }
+
+  /**
+   * Get multiple keys at once
+   */
+  public async mget(keys: string[]): Promise<(string | null)[]> {
+    if (!this.isRedisConnected()) {
+      return keys.map(() => null);
+    }
+
+    try {
+      const results = await this.client!.mGet(keys);
+      // Ensure we return string | null array, not RedisCommandRawReply
+      return results.map(result => typeof result === 'string' ? result : null);
+    } catch (error) {
+      logger.error('Redis mget operation failed', { keys, error });
+      return keys.map(() => null);
+    }
+  }
+
+  /**
+   * Ping Redis server
+   */
+  public async ping(): Promise<string | null> {
+    if (!this.isRedisConnected()) {
+      return null;
+    }
+
+    try {
+      return await this.client!.ping();
+    } catch (error) {
+      logger.error('Redis ping operation failed', error);
+      return null;
+    }
+  }
+
+  /**
+   * Add members to a set
+   */
+  public async sadd(key: string, ...members: string[]): Promise<number> {
+    if (!this.isRedisConnected()) {
+      return 0;
+    }
+
+    try {
+      return await this.client!.sAdd(key, members);
+    } catch (error) {
+      logger.error('Redis sadd operation failed', { key, members, error });
+      return 0;
+    }
+  }
+
+  /**
+   * Get all members of a set
+   */
+  public async smembers(key: string): Promise<string[]> {
+    if (!this.isRedisConnected()) {
+      return [];
+    }
+
+    try {
+      return await this.client!.sMembers(key);
+    } catch (error) {
+      logger.error('Redis smembers operation failed', { key, error });
+      return [];
+    }
+  }
+
+  /**
+   * Remove members from a set
+   */
+  public async srem(key: string, ...members: string[]): Promise<number> {
+    if (!this.isRedisConnected()) {
+      return 0;
+    }
+
+    try {
+      return await this.client!.sRem(key, members);
+    } catch (error) {
+      logger.error('Redis srem operation failed', { key, members, error });
+      return 0;
+    }
+  }
 }
 
 // Export singleton instance

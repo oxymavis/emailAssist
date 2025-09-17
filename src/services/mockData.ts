@@ -1,4 +1,18 @@
-import { Email, EmailAnalysis, FilterRule, Report, Workflow, DashboardStats, UserSettings } from '@/types';
+import { 
+  Email, 
+  EmailAnalysis, 
+  FilterRule, 
+  Report, 
+  Workflow, 
+  DashboardStats, 
+  UserSettings,
+  EmailVolumeData,
+  SentimentData,
+  CategoryData,
+  PriorityHeatmapData,
+  ResponseTimeData,
+  TopSenderData
+} from '@/types';
 import { subDays, subHours, format } from 'date-fns';
 import i18n from '@/i18n';
 
@@ -432,4 +446,205 @@ export const mockDataService = {
     { name: t('mockData.analysisCategories.marketingActivity'), value: 89, color: '#9C27B0' },
     { name: t('mockData.analysisCategories.systemNotification'), value: 67, color: '#607D8B' },
   ],
+  
+  // 高级图表数据生成方法
+  getEmailVolumeData: (days = 30) => generateEmailVolumeData(days),
+  getSentimentAnalysisData: () => generateSentimentAnalysisData(),
+  getCategoryDistributionData: () => generateCategoryDistributionData(),
+  getPriorityHeatmapData: () => generatePriorityHeatmapData(),
+  getResponseTimeData: (days = 14) => generateResponseTimeData(days),
+  getTopSendersData: (count = 10) => generateTopSendersData(count),
+};
+
+// 生成邮件量趋势数据
+const generateEmailVolumeData = (days: number): EmailVolumeData[] => {
+  const data: EmailVolumeData[] = [];
+  const now = new Date();
+
+  for (let i = days - 1; i >= 0; i--) {
+    const date = subDays(now, i);
+    const baseVolume = Math.floor(Math.random() * 50) + 100; // 100-150 基础量
+    const received = baseVolume + Math.floor(Math.random() * 30);
+    const sent = Math.floor(received * 0.3) + Math.floor(Math.random() * 20);
+    const unread = Math.floor(received * 0.1) + Math.floor(Math.random() * 10);
+    const processed = received - unread - Math.floor(Math.random() * 15);
+
+    data.push({
+      date: date.toISOString(),
+      total: received + sent,
+      received,
+      sent,
+      unread,
+      processed: Math.max(0, processed),
+    });
+  }
+
+  return data;
+};
+
+// 生成情感分析数据
+const generateSentimentAnalysisData = (): SentimentData[] => {
+  const total = Math.floor(Math.random() * 500) + 1000; // 1000-1500 总数
+  const positive = Math.floor(total * (0.6 + Math.random() * 0.2)); // 60-80%
+  const negative = Math.floor(total * (0.05 + Math.random() * 0.1)); // 5-15%
+  const neutral = total - positive - negative;
+
+  return [
+    {
+      sentiment: 'positive',
+      count: positive,
+      percentage: (positive / total) * 100,
+      trend: Math.random() * 10 - 5, // -5% 到 +5% 趋势
+      color: '#4CAF50',
+    },
+    {
+      sentiment: 'neutral',
+      count: neutral,
+      percentage: (neutral / total) * 100,
+      trend: Math.random() * 4 - 2, // -2% 到 +2% 趋势
+      color: '#FF9800',
+    },
+    {
+      sentiment: 'negative',
+      count: negative,
+      percentage: (negative / total) * 100,
+      trend: Math.random() * 6 - 3, // -3% 到 +3% 趋势
+      color: '#F44336',
+    },
+  ];
+};
+
+// 生成分类分布数据
+const generateCategoryDistributionData = (): CategoryData[] => {
+  const categories = [
+    { name: t('mockData.categories.work'), color: '#2196F3' },
+    { name: t('mockData.categories.meeting'), color: '#4CAF50' },
+    { name: t('mockData.categories.project'), color: '#FF9800' },
+    { name: t('mockData.categories.customer'), color: '#9C27B0' },
+    { name: t('mockData.categories.system'), color: '#607D8B' },
+    { name: t('mockData.categories.marketing'), color: '#E91E63' },
+    { name: t('mockData.categories.support'), color: '#00BCD4' },
+    { name: t('mockData.categories.urgent'), color: '#F44336' },
+  ];
+
+  const total = Math.floor(Math.random() * 1000) + 2000;
+  let remaining = total;
+
+  return categories.map((category, index) => {
+    const isLast = index === categories.length - 1;
+    const count = isLast 
+      ? remaining 
+      : Math.floor(remaining * (0.05 + Math.random() * 0.25));
+    
+    remaining -= count;
+
+    const subcategories = Math.random() > 0.5 ? [
+      {
+        name: `${category.name} - 子类别 1`,
+        count: Math.floor(count * 0.6),
+        percentage: 60,
+        color: category.color,
+      },
+      {
+        name: `${category.name} - 子类别 2`,
+        count: Math.floor(count * 0.4),
+        percentage: 40,
+        color: category.color,
+      },
+    ] : undefined;
+
+    return {
+      name: category.name,
+      count,
+      percentage: (count / total) * 100,
+      color: category.color,
+      subcategories,
+    };
+  });
+};
+
+// 生成优先级热力图数据
+const generatePriorityHeatmapData = (): PriorityHeatmapData[] => {
+  const data: PriorityHeatmapData[] = [];
+  const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+  const priorities: ('low' | 'normal' | 'high' | 'critical')[] = ['low', 'normal', 'high', 'critical'];
+
+  days.forEach(day => {
+    for (let hour = 0; hour < 24; hour++) {
+      const priority = priorities[Math.floor(Math.random() * priorities.length)];
+      const baseCount = hour >= 9 && hour <= 17 ? Math.floor(Math.random() * 20) + 5 : Math.floor(Math.random() * 5);
+      
+      data.push({
+        hour,
+        day,
+        priority,
+        count: baseCount,
+        intensity: Math.min(baseCount / 25, 1), // 标准化强度值
+      });
+    }
+  });
+
+  return data;
+};
+
+// 生成响应时间数据
+const generateResponseTimeData = (days: number): ResponseTimeData[] => {
+  const data: ResponseTimeData[] = [];
+  const now = new Date();
+
+  for (let i = days - 1; i >= 0; i--) {
+    const date = subDays(now, i);
+    const avgResponse = 1 + Math.random() * 4; // 1-5小时
+    const medianResponse = avgResponse * (0.8 + Math.random() * 0.4); // 中位数通常更低
+    const count = Math.floor(Math.random() * 50) + 10;
+    const trend = (Math.random() - 0.5) * 20; // -10% 到 +10%
+
+    data.push({
+      timeRange: format(date, 'MM-dd'),
+      avgResponse: Number(avgResponse.toFixed(1)),
+      medianResponse: Number(medianResponse.toFixed(1)),
+      count,
+      trend: Number(trend.toFixed(1)),
+    });
+  }
+
+  return data;
+};
+
+// 生成主要发件人数据
+const generateTopSendersData = (count: number): TopSenderData[] => {
+  const senders = [
+    { name: t('mockData.senders.zhangsan'), email: 'zhangsan@company.com' },
+    { name: t('mockData.senders.lisi'), email: 'lisi@client.com' },
+    { name: t('mockData.senders.wangwu'), email: 'wangwu@partner.com' },
+    { name: t('mockData.senders.zhaoliu'), email: 'zhaoliu@vendor.com' },
+    { name: t('mockData.senders.johnSmith'), email: 'john.smith@global.com' },
+    { name: t('mockData.senders.sarahJohnson'), email: 'sarah.j@tech.com' },
+    { name: t('mockData.senders.marketingTeam'), email: 'marketing@company.com' },
+    { name: t('mockData.senders.supportTeam'), email: 'support@service.com' },
+    { name: '李明', email: 'liming@business.com' },
+    { name: 'Alex Chen', email: 'alex.chen@international.com' },
+    { name: '客户服务部', email: 'service@help.com' },
+    { name: 'Michael Brown', email: 'mbrown@partner.org' },
+  ];
+
+  return senders.slice(0, count).map((sender, index) => {
+    const emailCount = Math.floor(Math.random() * 200) + 50 - (index * 10); // 递减趋势
+    const avgResponseTime = 0.5 + Math.random() * 3; // 0.5-3.5小时
+    const sentimentScore = 4 + Math.random() * 6; // 4-10分
+
+    return {
+      name: sender.name,
+      email: sender.email,
+      count: emailCount,
+      avgResponseTime: Number(avgResponseTime.toFixed(1)),
+      sentimentScore: Number(sentimentScore.toFixed(1)),
+      urgencyDistribution: {
+        low: Math.floor(emailCount * 0.4),
+        normal: Math.floor(emailCount * 0.35),
+        high: Math.floor(emailCount * 0.2),
+        critical: Math.floor(emailCount * 0.05),
+      },
+    };
+  });
 };

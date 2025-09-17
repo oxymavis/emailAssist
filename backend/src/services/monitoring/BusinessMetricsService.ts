@@ -207,7 +207,7 @@ export class BusinessMetricsService extends EventEmitter {
    * 收集邮件相关指标
    */
   private async collectEmailMetrics(timestamp: Date): Promise<EmailMetrics> {
-    const db = DatabaseManager.getInstance();
+    const db = DatabaseManager;
     const now = timestamp;
     const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
 
@@ -258,7 +258,7 @@ export class BusinessMetricsService extends EventEmitter {
    * 收集用户活跃度指标
    */
   private async collectUserActivityMetrics(timestamp: Date): Promise<UserActivityMetrics> {
-    const db = DatabaseManager.getInstance();
+    const db = DatabaseManager;
     const now = timestamp;
     const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
     const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
@@ -321,7 +321,7 @@ export class BusinessMetricsService extends EventEmitter {
    * 收集AI分析指标
    */
   private async collectAIAnalysisMetrics(timestamp: Date): Promise<AIAnalysisMetrics> {
-    const db = DatabaseManager.getInstance();
+    const db = DatabaseManager;
     const oneHourAgo = new Date(timestamp.getTime() - 60 * 60 * 1000);
 
     try {
@@ -375,7 +375,7 @@ export class BusinessMetricsService extends EventEmitter {
    * 收集规则引擎指标
    */
   private async collectRuleEngineMetrics(timestamp: Date): Promise<RuleEngineMetrics> {
-    const db = DatabaseManager.getInstance();
+    const db = DatabaseManager;
     const oneHourAgo = new Date(timestamp.getTime() - 60 * 60 * 1000);
 
     try {
@@ -424,7 +424,7 @@ export class BusinessMetricsService extends EventEmitter {
    * 收集报告指标
    */
   private async collectReportMetrics(timestamp: Date): Promise<ReportMetrics> {
-    const db = DatabaseManager.getInstance();
+    const db = DatabaseManager;
     const oneHourAgo = new Date(timestamp.getTime() - 60 * 60 * 1000);
 
     try {

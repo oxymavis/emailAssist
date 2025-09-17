@@ -1,0 +1,227 @@
+/**
+ * Email Routes
+ * 邮件相关路由定义
+ */
+
+import { Router } from 'express';
+import { EmailMessagesController } from '@/controllers/EmailMessagesController';
+import { authenticateToken } from '@/middleware/auth';
+import { asyncErrorHandler } from '@/middleware/errorHandler';
+import validation from '@/middleware/validation';
+
+const router = Router();
+const emailController = new EmailMessagesController();
+
+// 应用认证中间件到所有路由
+router.use(authenticateToken);
+
+// 应用通用中间件
+router.use(validation.sanitizeInput);
+router.use(validation.validateRateLimit);
+
+/**
+ * 获取邮件列表
+ * GET /api/emails/:accountId/messages
+ */
+router.get(
+  '/:accountId/messages',
+  validation.createValidationMiddleware([
+    ...validation.validateAccountId,
+    ...validation.validateEmailListQuery
+  ]),
+  asyncErrorHandler(emailController.getMessages)
+);
+
+/**
+ * 获取单条邮件详情（包含分析结果）
+ * GET /api/emails/:accountId/messages/:messageId
+ */
+router.get(
+  '/:accountId/messages/:messageId',
+  validation.createValidationMiddleware([
+    ...validation.validateAccountId,
+    ...validation.validateEmailId
+  ]),
+  asyncErrorHandler(emailController.getMessage)
+);
+
+/**
+ * 同步邮件数据
+ * POST /api/emails/:accountId/sync
+ */
+router.post(
+  '/:accountId/sync',
+  validation.createValidationMiddleware([
+    ...validation.validateAccountId,
+    ...validation.validateEmailSync
+  ]),
+  asyncErrorHandler(emailController.syncEmails)
+);
+
+/**
+ * 获取邮件统计信息
+ * GET /api/emails/:accountId/stats
+ */
+router.get(
+  '/:accountId/stats',
+  validation.createValidationMiddleware([
+    ...validation.validateAccountId
+  ]),
+  asyncErrorHandler(emailController.getEmailStats)
+);
+
+/**
+ * 标记邮件为已读/未读
+ * PUT /api/emails/:accountId/messages/:messageId/read-status
+ */
+router.put(
+  '/:accountId/messages/:messageId/read-status',
+  validation.createValidationMiddleware([
+    ...validation.validateAccountId,
+    ...validation.validateEmailId,
+    ...validation.validateMarkAsRead
+  ]),
+  asyncErrorHandler(emailController.markAsRead)
+);
+
+/**
+ * 删除邮件
+ * DELETE /api/emails/:accountId/messages/:messageId
+ */
+router.delete(
+  '/:accountId/messages/:messageId',
+  validation.createValidationMiddleware([
+    ...validation.validateAccountId,
+    ...validation.validateEmailId
+  ]),
+  asyncErrorHandler(emailController.deleteMessage)
+);
+
+/**
+ * 触发邮件内容分析
+ * POST /api/emails/:accountId/messages/:messageId/analyze
+ */
+router.post(
+  '/:accountId/messages/:messageId/analyze',
+  validation.createValidationMiddleware([
+    ...validation.validateAccountId,
+    ...validation.validateEmailId,
+    ...validation.validateEmailAnalysis
+  ]),
+  asyncErrorHandler(emailController.analyzeEmail)
+);
+
+/**
+ * 获取邮件分析结果
+ * GET /api/emails/:accountId/messages/:messageId/analysis
+ */
+router.get(
+  '/:accountId/messages/:messageId/analysis',
+  validation.createValidationMiddleware([
+    ...validation.validateAccountId,
+    ...validation.validateEmailId
+  ]),
+  asyncErrorHandler(emailController.getEmailAnalysis)
+);
+
+/**
+ * 批量分析邮件
+ * POST /api/emails/:accountId/batch-analyze
+ */
+router.post(
+  '/:accountId/batch-analyze',
+  validation.createValidationMiddleware([
+    ...validation.validateAccountId,
+    ...validation.validateBatchAnalysis
+  ]),
+  asyncErrorHandler(emailController.batchAnalyzeEmails)
+);
+
+/**
+ * 获取批量分析任务状态
+ * GET /api/emails/batch-jobs/:jobId/status
+ */
+router.get(
+  '/batch-jobs/:jobId/status',
+  validation.createValidationMiddleware([
+    ...validation.validateJobId
+  ]),
+  asyncErrorHandler(emailController.getBatchAnalysisStatus)
+);
+
+/**
+ * 取消批量分析任务
+ * DELETE /api/emails/batch-jobs/:jobId
+ */
+router.delete(
+  '/batch-jobs/:jobId',
+  validation.createValidationMiddleware([
+    ...validation.validateJobId
+  ]),
+  asyncErrorHandler(emailController.cancelBatchAnalysis)
+);
+
+/**
+ * 批量操作邮件
+ * POST /api/emails/:accountId/batch-operations
+ */
+router.post(
+  '/:accountId/batch-operations',
+  validation.createValidationMiddleware([
+    ...validation.validateAccountId,
+    ...validation.validateBatchOperation
+  ]),
+  asyncErrorHandler(emailController.batchOperation)
+);
+
+/**
+ * 发送邮件
+ * POST /api/emails/:accountId/send
+ */
+router.post(
+  '/:accountId/send',
+  validation.createValidationMiddleware([
+    ...validation.validateAccountId,
+    ...validation.validateEmailSend
+  ]),
+  asyncErrorHandler(emailController.sendMessage)
+);
+
+/**
+ * 移动邮件到指定文件夹
+ * PUT /api/emails/:accountId/messages/:messageId/move
+ */
+router.put(
+  '/:accountId/messages/:messageId/move',
+  validation.createValidationMiddleware([
+    ...validation.validateAccountId,
+    ...validation.validateEmailId
+  ]),
+  asyncErrorHandler(emailController.moveMessage)
+);
+
+/**
+ * 搜索邮件
+ * POST /api/emails/:accountId/search
+ */
+router.post(
+  '/:accountId/search',
+  validation.createValidationMiddleware([
+    ...validation.validateAccountId
+  ]),
+  asyncErrorHandler(emailController.searchMessages)
+);
+
+/**
+ * 获取文件夹列表
+ * GET /api/emails/:accountId/folders
+ */
+router.get(
+  '/:accountId/folders',
+  validation.createValidationMiddleware([
+    ...validation.validateAccountId
+  ]),
+  asyncErrorHandler(emailController.getFolders)
+);
+
+export default router;

@@ -718,7 +718,7 @@ export class IntelligentAlertingSystem extends EventEmitter {
    * 发送邮件
    */
   private async sendEmail(to: string, subject: string, body: string, config: any): Promise<void> {
-    const transporter = nodemailer.createTransporter(config);
+    const transporter = nodemailer.createTransport(config);
     
     await transporter.sendMail({
       from: config.from,
@@ -1007,7 +1007,7 @@ export class IntelligentAlertingSystem extends EventEmitter {
    */
   private async persistAlert(alert: Alert): Promise<void> {
     try {
-      const db = DatabaseManager.getInstance();
+      const db = DatabaseManager;
       const alertData = JSON.stringify(alert);
       
       await db.query(

@@ -10,7 +10,7 @@ import {
   RateLimitStatus,
   RateLimitConfig 
 } from '../../types';
-import { logger } from '../../utils/logger';
+import logger from '../../utils/logger';
 
 /**
  * 邮件服务抽象基类
@@ -183,7 +183,7 @@ export abstract class BaseEmailService extends EventEmitter implements IEmailSer
   /**
    * 创建成功结果
    */
-  protected createSuccessResult(data?: any, operation: string, startTime?: Date): EmailOperationResult {
+  protected createSuccessResult(data: any, operation: string, startTime?: Date): EmailOperationResult {
     const executionTime = startTime ? Date.now() - startTime.getTime() : 0;
     
     return {

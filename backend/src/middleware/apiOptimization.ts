@@ -528,3 +528,35 @@ export const setupCleanupTasks = (): void => {
   
   logger.info('API optimization cleanup tasks started');
 };
+
+/**
+ * Simple rate limit middleware
+ */
+export const rateLimitMiddleware = (maxRequests: number = 100, windowMs: number = 15 * 60 * 1000) => {
+  const requestCounts = new Map<string, { count: number; resetTime: number }>();
+  
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const key = req.ip || 'unknown';
+    const now = Date.now();
+    
+    let requestData = requestCounts.get(key);
+    
+    if (!requestData || now > requestData.resetTime) {
+      requestData = { count: 1, resetTime: now + windowMs };
+      requestCounts.set(key, requestData);
+      return next();
+    }
+    
+    if (requestData.count >= maxRequests) {
+      res.status(429).json({
+        success: false,
+        error: 'Too many requests',
+        message: `Rate limit exceeded. Try again in ${Math.ceil((requestData.resetTime - now) / 1000)} seconds.`
+      });
+      return;
+    }
+    
+    requestData.count++;
+    next();
+  };
+};

@@ -1,6 +1,6 @@
 import axios, { AxiosResponse } from 'axios';
 import logger from '@/utils/logger';
-import { AuthenticationError, EmailSyncError } from '@/utils/errors';
+import { AuthenticationError, EmailSyncError } from '@/types';
 import { MicrosoftAuthService, MicrosoftTokens } from '../auth/MicrosoftAuthService';
 
 /**

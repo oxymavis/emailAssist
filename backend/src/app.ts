@@ -12,15 +12,17 @@ import {
   requestLogger,
   securityHeaders,
   globalRateLimit,
-  notFound,
-  errorHandler,
   corsOptions
 } from '@/middleware';
-import routes, { createRoutes } from '@/routes';
-import { EmailServiceFactory } from './services/email/EmailServiceFactory';
-import { EmailSyncService } from './services/email/EmailSyncService';
-import { EmailServiceMonitor } from './services/monitoring/EmailServiceMonitor';
-import { DatabaseService } from './services/database/DatabaseService';
+import { notFoundHandler, errorHandler, setupUncaughtExceptionHandlers } from '@/middleware/errorHandler';
+import routes from '@/routes';
+import emailRoutes from '@/routes/email';
+import p1Routes from '@/routes/p1-features';
+import { SocketService } from '@/services/SocketService';
+import { createServer, Server as HTTPServer } from 'http';
+// import EmailSyncService from '@/services/EmailSyncService';
+// import EmailContentProcessor from '@/services/EmailContentProcessor';
+// import BatchAnalysisProcessor from '@/services/BatchAnalysisProcessor';
 
 /**
  * Express application setup
@@ -28,14 +30,16 @@ import { DatabaseService } from './services/database/DatabaseService';
  */
 class App {
   public app: express.Application;
+  private httpServer: HTTPServer;
+  private socketService?: SocketService;
   private isInitialized = false;
-  private emailServiceFactory: EmailServiceFactory;
-  private emailSyncService: EmailSyncService;
-  private emailServiceMonitor: EmailServiceMonitor;
-  private databaseService: DatabaseService;
+  // private emailSyncService: any;
+  // private contentProcessor: any;
+  // private batchProcessor: any;
 
   constructor() {
     this.app = express();
+    this.httpServer = createServer(this.app);
     this.setupMiddleware();
     this.setupBasicRoutes();
     this.setupErrorHandling();
@@ -141,9 +145,16 @@ class App {
   private setupDatabaseRoutes(): void {
     try {
       logger.info('Setting up database routes...');
-      // Mount API routes with database connections
-      const apiRoutes = createRoutes(database.getPool(), redis);
-      this.app.use(API_CONFIG.BASE_PATH, apiRoutes);
+      
+      // Mount API routes
+      this.app.use(API_CONFIG.BASE_PATH, routes);
+      
+      // Mount email routes
+      this.app.use(`${API_CONFIG.BASE_PATH}/emails`, emailRoutes);
+
+      // Mount P1 features routes
+      this.app.use(`${API_CONFIG.BASE_PATH}/p1`, p1Routes);
+
       logger.info(`API routes mounted at ${API_CONFIG.BASE_PATH}`);
     } catch (error) {
       logger.error('Failed to setup database routes', error);
@@ -155,8 +166,11 @@ class App {
    * Setup error handling
    */
   private setupErrorHandling(): void {
+    // Setup uncaught exception handlers
+    setupUncaughtExceptionHandlers();
+    
     // Handle 404 errors
-    this.app.use(notFound);
+    this.app.use(notFoundHandler);
 
     // Global error handler (must be last)
     this.app.use(errorHandler);
@@ -183,6 +197,9 @@ class App {
       // Initialize Redis connection
       await redis.initialize();
 
+      // Initialize Socket.IO service
+      await this.initializeSocketService();
+
       // Initialize email services
       await this.initializeEmailServices();
 
@@ -208,8 +225,8 @@ class App {
       }
 
       const port = config.env.PORT;
-      
-      this.app.listen(port, () => {
+
+      this.httpServer.listen(port, () => {
         logger.info(`Server started successfully`, {
           port,
           environment: config.env.NODE_ENV,
@@ -236,36 +253,48 @@ class App {
   }
 
   /**
+   * Initialize Socket.IO service
+   */
+  private async initializeSocketService(): Promise<void> {
+    try {
+      logger.info('Initializing Socket.IO service...');
+
+      // Initialize Socket.IO with database connection
+      const dbInstance = database.getPool();
+      const jwtSecret = config.env.JWT_SECRET || 'your-jwt-secret';
+
+      this.socketService = new SocketService(this.httpServer, dbInstance, jwtSecret);
+
+      logger.info('Socket.IO service initialized successfully');
+    } catch (error) {
+      logger.error('Failed to initialize Socket.IO service:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Initialize email services
    */
   private async initializeEmailServices(): Promise<void> {
     try {
       logger.info('Initializing email services...');
 
-      // Initialize database service
-      this.databaseService = DatabaseService.getInstance();
-
-      // Initialize email service factory
-      this.emailServiceFactory = EmailServiceFactory.getInstance();
-
       // Initialize email sync service
-      this.emailSyncService = EmailSyncService.getInstance();
+      // this.emailSyncService = EmailSyncService.getInstance();
 
-      // Initialize email service monitor
-      this.emailServiceMonitor = EmailServiceMonitor.getInstance();
+      // Initialize content processor
+      // this.contentProcessor = EmailContentProcessor.getInstance();
 
-      // Setup periodic sync for all accounts
+      // Initialize batch analysis processor
+      // this.batchProcessor = BatchAnalysisProcessor.getInstance();
+
+      // Setup periodic cleanup for completed jobs
       setInterval(async () => {
         try {
-          await this.emailSyncService.schedulePeriodicSync();
+          // await this.batchProcessor.cleanupCompletedJobs(24); // Clean jobs older than 24 hours
         } catch (error) {
-          logger.error('Error in periodic sync:', error);
+          logger.error('Error in periodic job cleanup:', error);
         }
-      }, 5 * 60 * 1000); // Every 5 minutes
-
-      // Setup periodic cleanup
-      setInterval(() => {
-        this.emailSyncService.cleanupCompletedOperations();
       }, 60 * 60 * 1000); // Every hour
 
       logger.info('Email services initialized successfully');
@@ -283,26 +312,22 @@ class App {
       logger.info(`Received ${signal}, starting graceful shutdown...`);
 
       try {
-        // Shutdown email services
-        if (this.emailSyncService) {
-          await this.emailSyncService.shutdown();
-        }
-        if (this.emailServiceFactory) {
-          await this.emailServiceFactory.cleanup();
-        }
-        if (this.emailServiceMonitor) {
-          this.emailServiceMonitor.shutdown();
-        }
-        if (this.databaseService) {
-          await this.databaseService.shutdown();
-        }
+        // Cleanup batch processor jobs
+        // if (this.batchProcessor) {
+        //   await this.batchProcessor.cleanupCompletedJobs(0); // Clean all jobs
+        // }
 
         // Close database connections
         await database.close();
         
         // Close Redis connection
         await redis.close();
-        
+
+        // Close Socket.IO service
+        if (this.socketService) {
+          await this.socketService.close();
+        }
+
         logger.info('Graceful shutdown completed');
         process.exit(0);
       } catch (error) {
@@ -333,6 +358,20 @@ class App {
    */
   public getApp(): express.Application {
     return this.app;
+  }
+
+  /**
+   * Get HTTP server instance
+   */
+  public getHttpServer(): HTTPServer {
+    return this.httpServer;
+  }
+
+  /**
+   * Get Socket.IO service instance
+   */
+  public getSocketService(): SocketService | undefined {
+    return this.socketService;
   }
 }
 

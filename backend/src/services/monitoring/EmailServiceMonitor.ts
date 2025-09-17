@@ -7,7 +7,7 @@ import {
 } from '../../types';
 import { EmailServiceFactory } from '../email/EmailServiceFactory';
 import { EmailSyncService } from '../email/EmailSyncService';
-import { logger } from '../../utils/logger';
+import logger from '../../utils/logger';
 import { DatabaseService } from '../database/DatabaseService';
 
 /**

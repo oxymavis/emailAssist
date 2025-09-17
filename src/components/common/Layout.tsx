@@ -28,18 +28,26 @@ import {
   Assessment as AssessmentIcon,
   Hub as HubIcon,
   Settings as SettingsIcon,
+  AdminPanelSettings as AdminIcon,
   Notifications as NotificationsIcon,
   AccountCircle as AccountCircleIcon,
+  People as PeopleIcon,
   Brightness4 as Brightness4Icon,
   Brightness7 as Brightness7Icon,
   Logout as LogoutIcon,
+  IntegrationInstructions as IntegrationIcon,
+  Groups as GroupsIcon,
+  Email as EmailIcon,
 } from '@mui/icons-material';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAppStore, useSidebar, useNotifications } from '@/store';
 import LanguageSwitcher from './LanguageSwitcher';
+import NotificationCenter from '@/components/notifications/NotificationCenter';
+import MobileBottomNavigation from '@/components/responsive/MobileBottomNavigation';
+import { useResponsive } from '@/hooks/useResponsive';
 
-const DRAWER_WIDTH = 280;
+const _DRAWER_WIDTH = 280;
 
 // 导航菜单配置
 const getNavigationItems = (t: any) => [
@@ -53,6 +61,18 @@ const getNavigationItems = (t: any) => [
     text: t('nav.analysis'),
     icon: <AnalyticsIcon />,
     path: '/analysis',
+    badge: null,
+  },
+  {
+    text: '简化邮件列表',
+    icon: <EmailIcon />,
+    path: '/simple-emails',
+    badge: null,
+  },
+  {
+    text: '静态邮件展示',
+    icon: <EmailIcon />,
+    path: '/static-emails',
     badge: null,
   },
   {
@@ -74,6 +94,43 @@ const getNavigationItems = (t: any) => [
     badge: null,
   },
   {
+    text: t('nav.workflowOutput'),
+    icon: <HubIcon />,
+    path: '/workflow-output',
+    badge: null,
+  },
+  {
+    text: t('nav.integrations'),
+    icon: <IntegrationIcon />,
+    path: '/integrations',
+    badge: null,
+  },
+  {
+    text: t('nav.teamCollaboration'),
+    icon: <GroupsIcon />,
+    path: '/team-collaboration',
+    badge: null,
+  },
+  {
+    text: t('nav.team'),
+    icon: <PeopleIcon />,
+    path: '/team',
+    badge: null,
+  },
+  {
+    text: t('nav.admin'),
+    icon: <AdminIcon />,
+    path: '/admin',
+    badge: null,
+    adminOnly: true,
+  },
+  {
+    text: t('nav.notifications'),
+    icon: <NotificationsIcon />,
+    path: '/notifications',
+    badge: null,
+  },
+  {
     text: t('nav.settings'),
     icon: <SettingsIcon />,
     path: '/settings',
@@ -91,6 +148,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
+  const { drawerWidth, appBarHeight: _appBarHeight } = useResponsive();
   
   const { isOpen, toggle } = useSidebar();
   const { notifications } = useNotifications();
@@ -102,7 +160,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const [notificationMenuAnchor, setNotificationMenuAnchor] = useState<null | HTMLElement>(null);
 
   // 未读通知数量
-  const unreadNotifications = notifications.filter(n => !n.isRead).length;
+  const _unreadNotifications = notifications.filter(n => !n.isRead).length;
 
   // 处理导航点击
   const handleNavigation = (path: string) => {
@@ -127,7 +185,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   };
 
   // 通知菜单处理
-  const handleNotificationMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
+  const _handleNotificationMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
     setNotificationMenuAnchor(event.currentTarget);
   };
 
@@ -160,7 +218,17 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       <List sx={{ px: 1, py: 2 }}>
         {navigationItems.map((item) => {
           const isSelected = location.pathname === item.path;
-          
+
+          // 检查是否需要管理员权限
+          // 在实际应用中，这应该从store或context中获取用户角色
+          const currentUserRole = 'admin'; // 模拟当前用户角色
+          const hasAdminAccess = currentUserRole === 'admin' || currentUserRole === 'manager';
+
+          // 如果是管理员专属菜单且用户没有权限，则不显示
+          if (item.adminOnly && !hasAdminAccess) {
+            return null;
+          }
+
           return (
             <ListItem key={item.text} disablePadding sx={{ mb: 0.5 }}>
               <ListItemButton
@@ -228,8 +296,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       <AppBar
         position="fixed"
         sx={{
-          width: { md: `calc(100% - ${isOpen ? DRAWER_WIDTH : 0}px)` },
-          ml: { md: isOpen ? `${DRAWER_WIDTH}px` : 0 },
+          width: { md: `calc(100% - ${isOpen ? drawerWidth : 0}px)` },
+          ml: { md: isOpen ? `${drawerWidth}px` : 0 },
           transition: theme.transitions.create(['width', 'margin'], {
             easing: theme.transitions.easing.sharp,
             duration: theme.transitions.duration.leavingScreen,
@@ -263,17 +331,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             {/* 语言切换按钮 */}
             <LanguageSwitcher />
 
-            {/* 通知按钮 */}
-            <Tooltip title={t('menu.notifications')}>
-              <IconButton
-                color="inherit"
-                onClick={handleNotificationMenuOpen}
-              >
-                <Badge badgeContent={unreadNotifications} color="error">
-                  <NotificationsIcon />
-                </Badge>
-              </IconButton>
-            </Tooltip>
+            {/* 通知中心 */}
+            <NotificationCenter />
 
             {/* 用户菜单 */}
             <Tooltip title={t('menu.accountMenu')}>
@@ -292,7 +351,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       {/* 侧边栏 */}
       <Box
         component="nav"
-        sx={{ width: { md: isOpen ? DRAWER_WIDTH : 0 }, flexShrink: { md: 0 } }}
+        sx={{ width: { md: isOpen ? drawerWidth : 0 }, flexShrink: { md: 0 } }}
       >
         <Drawer
           variant={isMobile ? 'temporary' : 'persistent'}
@@ -304,7 +363,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           sx={{
             '& .MuiDrawer-paper': {
               boxSizing: 'border-box',
-              width: DRAWER_WIDTH,
+              width: drawerWidth,
             },
           }}
         >
@@ -317,7 +376,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         component="main"
         sx={{
           flexGrow: 1,
-          width: { md: `calc(100% - ${isOpen ? DRAWER_WIDTH : 0}px)` },
+          width: { md: `calc(100% - ${isOpen ? drawerWidth : 0}px)` },
           transition: theme.transitions.create('width', {
             easing: theme.transitions.easing.sharp,
             duration: theme.transitions.duration.leavingScreen,
@@ -325,7 +384,10 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         }}
       >
         <Toolbar /> {/* 为固定导航栏留出空间 */}
-        <Box sx={{ p: 3 }}>
+        <Box sx={{
+          p: 3,
+          pb: isMobile ? 10 : 3, // 移动端为底部导航预留空间
+        }}>
           {children}
         </Box>
       </Box>
@@ -399,6 +461,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           </>
         )}
       </Menu>
+
+      {/* 移动端底部导航 */}
+      <MobileBottomNavigation />
     </Box>
   );
 };

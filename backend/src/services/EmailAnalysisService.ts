@@ -3,18 +3,11 @@
  * Provides AI-powered email content analysis using DeepSeek API
  */
 
-import { Configuration, OpenAIApi } from 'openai';
+import axios from 'axios';
 import database from '@/config/database';
 import logger from '@/utils/logger';
 import { EmailAnalysisResult, EmailSentiment, EmailUrgency } from '@/types';
 import { DatabaseError } from '@/utils/errors';
-
-// Configure DeepSeek API (compatible with OpenAI interface)
-const configuration = new Configuration({
-  apiKey: process.env.DEEPSEEK_API_KEY,
-  basePath: process.env.DEEPSEEK_BASE_URL
-});
-const openai = new OpenAIApi(configuration);
 
 export interface EmailAnalysisInput {
   emailId: string;
@@ -26,6 +19,29 @@ export interface EmailAnalysisInput {
 }
 
 export class EmailAnalysisService {
+  private static readonly DEEPSEEK_API_URL = 'https://api.deepseek.com/v1/chat/completions';
+  private static readonly API_KEY = process.env.DEEPSEEK_API_KEY;
+
+  private static async callDeepSeekAPI(messages: any[], model: string = 'deepseek-chat'): Promise<any> {
+    if (!this.API_KEY) {
+      throw new Error('DEEPSEEK_API_KEY is not configured');
+    }
+
+    const response = await axios.post(this.DEEPSEEK_API_URL, {
+      model,
+      messages,
+      temperature: 0.7,
+      max_tokens: 2000
+    }, {
+      headers: {
+        'Authorization': `Bearer ${this.API_KEY}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    return response.data;
+  }
+
   /**
    * Analyze email content using AI
    */
@@ -53,27 +69,25 @@ export class EmailAnalysisService {
         this.detectActionRequired(input),
         this.generateSuggestedResponse(input)
       ]);
-      
+
       const result: EmailAnalysisResult = {
+        id: `analysis_${input.emailId}_${Date.now()}`,
         emailId: input.emailId,
         sentiment,
         urgency,
         category,
         keyTopics,
-        entities,
         summary,
         actionRequired,
         suggestedResponse,
-        confidenceScore: 0.85, // Will be calculated based on model confidence
-        language: await this.detectLanguage(input.body),
-        analysisVersion: '1.0.0',
-        processedAt: new Date()
+        confidence: 0.85, // Default confidence
+        processedAt: new Date().toISOString()
       };
-      
-      // Save analysis result to database
+
+      // Save to database
       await this.saveAnalysisResult(result);
-      
-      logger.info('Email analysis completed', { 
+
+      logger.info('Email analysis completed', {
         emailId: input.emailId,
         category,
         urgency,
@@ -101,17 +115,12 @@ export class EmailAnalysisService {
         Return only the sentiment classification.
       `;
       
-      const response = await openai.createChatCompletion({
-        model: 'deepseek-chat',
-        messages: [
-          { role: 'system', content: 'You are an email sentiment analyzer. Return only one word: positive, neutral, negative, or mixed.' },
-          { role: 'user', content: prompt }
-        ],
-        temperature: 0.3,
-        max_tokens: 10
-      });
+      const response = await this.callDeepSeekAPI([
+        { role: 'system', content: 'You are an email sentiment analyzer. Return only one word: positive, neutral, negative, or mixed.' },
+        { role: 'user', content: prompt }
+      ]);
       
-      const sentiment = response.data.choices[0]?.message?.content?.trim().toLowerCase();
+      const sentiment = response.choices[0]?.message?.content?.trim().toLowerCase();
       
       if (['positive', 'neutral', 'negative', 'mixed'].includes(sentiment as string)) {
         return sentiment as EmailSentiment;
@@ -123,7 +132,7 @@ export class EmailAnalysisService {
       return 'neutral';
     }
   }
-  
+
   /**
    * Analyze email urgency
    */
@@ -139,17 +148,12 @@ export class EmailAnalysisService {
         Classify as: low, medium, high, or critical
       `;
       
-      const response = await openai.createChatCompletion({
-        model: 'deepseek-chat',
-        messages: [
-          { role: 'system', content: 'You are an email urgency analyzer. Return only one word: low, medium, high, or critical.' },
-          { role: 'user', content: prompt }
-        ],
-        temperature: 0.3,
-        max_tokens: 10
-      });
+      const response = await this.callDeepSeekAPI([
+        { role: 'system', content: 'You are an email urgency analyzer. Return only one word: low, medium, high, or critical.' },
+        { role: 'user', content: prompt }
+      ]);
       
-      const urgency = response.data.choices[0]?.message?.content?.trim().toLowerCase();
+      const urgency = response.choices[0]?.message?.content?.trim().toLowerCase();
       
       if (['low', 'medium', 'high', 'critical'].includes(urgency as string)) {
         return urgency as EmailUrgency;
@@ -161,142 +165,117 @@ export class EmailAnalysisService {
       return 'medium';
     }
   }
-  
+
   /**
    * Categorize email
    */
   static async categorizeEmail(input: EmailAnalysisInput): Promise<string> {
     try {
       const prompt = `
-        Categorize this email into one of the following categories:
-        - Work/Business
+        Categorize this email into one of these categories:
+        - Work
         - Personal
-        - Marketing/Promotional
-        - Newsletter
-        - Social
-        - Finance/Banking
+        - Marketing
+        - Finance
         - Travel
-        - Support/Customer Service
-        - Notification/Alert
-        - Spam
+        - Health
+        - Education
         - Other
         
         Subject: ${input.subject}
-        Sender: ${input.sender}
-        Body: ${input.body.substring(0, 500)}
+        Body: ${input.body}
         
         Return only the category name.
       `;
       
-      const response = await openai.createChatCompletion({
-        model: 'deepseek-chat',
-        messages: [
-          { role: 'system', content: 'You are an email categorizer. Return only the category name.' },
-          { role: 'user', content: prompt }
-        ],
-        temperature: 0.3,
-        max_tokens: 20
-      });
+      const response = await this.callDeepSeekAPI([
+        { role: 'system', content: 'You are an email categorizer. Return only the category name.' },
+        { role: 'user', content: prompt }
+      ]);
       
-      return response.data.choices[0]?.message?.content?.trim() || 'Other';
+      return response.choices[0]?.message?.content?.trim() || 'Other';
     } catch (error) {
       logger.error('Email categorization failed', error);
       return 'Other';
     }
   }
-  
+
   /**
    * Generate email summary
    */
   static async generateSummary(input: EmailAnalysisInput): Promise<string> {
     try {
       const prompt = `
-        Create a concise summary of this email in 2-3 sentences.
-        Focus on the main point and any action items.
+        Generate a concise summary of this email in 1-2 sentences.
         
         Subject: ${input.subject}
         Body: ${input.body}
       `;
       
-      const response = await openai.createChatCompletion({
-        model: 'deepseek-chat',
-        messages: [
-          { role: 'system', content: 'You are an email summarizer. Provide concise, informative summaries.' },
-          { role: 'user', content: prompt }
-        ],
-        temperature: 0.5,
-        max_tokens: 100
-      });
+      const response = await this.callDeepSeekAPI([
+        { role: 'system', content: 'You are an email summarizer. Generate concise summaries.' },
+        { role: 'user', content: prompt }
+      ]);
       
-      return response.data.choices[0]?.message?.content?.trim() || 'Email summary not available.';
+      return response.choices[0]?.message?.content?.trim() || 'Email summary not available.';
     } catch (error) {
       logger.error('Summary generation failed', error);
-      return 'Unable to generate summary.';
+      return 'Email summary not available.';
     }
   }
-  
+
   /**
    * Extract key topics
    */
   static async extractKeyTopics(input: EmailAnalysisInput): Promise<string[]> {
     try {
       const prompt = `
-        Extract 3-5 key topics or keywords from this email.
-        Return as a comma-separated list.
+        Extract the main topics and keywords from this email.
+        Return them as a comma-separated list.
         
         Subject: ${input.subject}
         Body: ${input.body}
       `;
       
-      const response = await openai.createChatCompletion({
-        model: 'deepseek-chat',
-        messages: [
-          { role: 'system', content: 'You are a keyword extractor. Return only comma-separated keywords.' },
-          { role: 'user', content: prompt }
-        ],
-        temperature: 0.3,
-        max_tokens: 50
-      });
+      const response = await this.callDeepSeekAPI([
+        { role: 'system', content: 'You are a topic extractor. Return topics as a comma-separated list.' },
+        { role: 'user', content: prompt }
+      ]);
       
-      const topics = response.data.choices[0]?.message?.content?.trim();
+      const topics = response.choices[0]?.message?.content?.trim();
       return topics ? topics.split(',').map(t => t.trim()) : [];
     } catch (error) {
       logger.error('Topic extraction failed', error);
       return [];
     }
   }
-  
+
   /**
-   * Extract named entities
+   * Extract entities
    */
   static async extractEntities(input: EmailAnalysisInput): Promise<any> {
     try {
       const prompt = `
-        Extract named entities from this email and categorize them:
-        - People (names)
-        - Organizations (companies, institutions)
-        - Locations (cities, countries, addresses)
-        - Dates (specific dates, deadlines)
-        - Money (amounts, currencies)
-        - Products (product names, services)
+        Extract entities from this email and return as JSON:
+        {
+          "people": ["person1", "person2"],
+          "organizations": ["org1", "org2"],
+          "locations": ["location1", "location2"],
+          "dates": ["date1", "date2"],
+          "amounts": ["amount1", "amount2"]
+        }
         
+        Subject: ${input.subject}
         Body: ${input.body}
-        
-        Return as JSON format.
       `;
       
-      const response = await openai.createChatCompletion({
-        model: 'deepseek-chat',
-        messages: [
-          { role: 'system', content: 'You are an entity extractor. Return valid JSON with extracted entities.' },
-          { role: 'user', content: prompt }
-        ],
-        temperature: 0.3,
-        max_tokens: 200
-      });
+      const response = await this.callDeepSeekAPI([
+        { role: 'system', content: 'You are an entity extractor. Return valid JSON only.' },
+        { role: 'user', content: prompt }
+      ]);
       
       try {
-        const entities = JSON.parse(response.data.choices[0]?.message?.content || '{}');
+        const entities = JSON.parse(response.choices[0]?.message?.content || '{}');
         return entities;
       } catch {
         return {
@@ -304,113 +283,99 @@ export class EmailAnalysisService {
           organizations: [],
           locations: [],
           dates: [],
-          money: [],
-          products: []
+          amounts: []
         };
       }
     } catch (error) {
       logger.error('Entity extraction failed', error);
-      return {};
+      return {
+        people: [],
+        organizations: [],
+        locations: [],
+        dates: [],
+        amounts: []
+      };
     }
   }
-  
+
   /**
    * Detect if action is required
    */
   static async detectActionRequired(input: EmailAnalysisInput): Promise<boolean> {
     try {
       const prompt = `
-        Does this email require action from the recipient?
-        Look for: questions, requests, deadlines, meeting invitations, tasks, or follow-up items.
+        Determine if this email requires any action or response from the recipient.
+        Consider questions, requests, deadlines, and action items.
         
         Subject: ${input.subject}
         Body: ${input.body}
         
-        Answer only: yes or no
+        Answer with: yes or no
       `;
       
-      const response = await openai.createChatCompletion({
-        model: 'deepseek-chat',
-        messages: [
-          { role: 'system', content: 'You are an email action detector. Answer only yes or no.' },
-          { role: 'user', content: prompt }
-        ],
-        temperature: 0.3,
-        max_tokens: 5
-      });
+      const response = await this.callDeepSeekAPI([
+        { role: 'system', content: 'You are an action detector. Answer only yes or no.' },
+        { role: 'user', content: prompt }
+      ]);
       
-      const answer = response.data.choices[0]?.message?.content?.trim().toLowerCase();
+      const answer = response.choices[0]?.message?.content?.trim().toLowerCase();
       return answer === 'yes';
     } catch (error) {
       logger.error('Action detection failed', error);
       return false;
     }
   }
-  
+
   /**
    * Generate suggested response
    */
   static async generateSuggestedResponse(input: EmailAnalysisInput): Promise<string | undefined> {
     try {
-      // Only generate response if action is required
       const actionRequired = await this.detectActionRequired(input);
+      
       if (!actionRequired) {
         return undefined;
       }
-      
+
       const prompt = `
-        Generate a professional email response to this email.
-        Keep it concise and appropriate to the context.
+        Generate a professional response suggestion for this email.
+        Keep it concise and appropriate for the context.
         
-        Original Email:
         Subject: ${input.subject}
-        From: ${input.sender}
         Body: ${input.body}
-        
-        Generate a response that addresses the main points.
       `;
       
-      const response = await openai.createChatCompletion({
-        model: 'deepseek-chat',
-        messages: [
-          { role: 'system', content: 'You are a professional email response generator. Create appropriate, concise responses.' },
-          { role: 'user', content: prompt }
-        ],
-        temperature: 0.7,
-        max_tokens: 200
-      });
+      const response = await this.callDeepSeekAPI([
+        { role: 'system', content: 'You are a professional email assistant. Generate appropriate responses.' },
+        { role: 'user', content: prompt }
+      ]);
       
-      return response.data.choices[0]?.message?.content?.trim();
+      return response.choices[0]?.message?.content?.trim();
     } catch (error) {
       logger.error('Response generation failed', error);
       return undefined;
     }
   }
-  
+
   /**
-   * Detect email language
+   * Detect language
    */
   static async detectLanguage(text: string): Promise<string> {
     try {
       const prompt = `Detect the language of this text and return the ISO 639-1 code (e.g., en, zh, es): ${text.substring(0, 200)}`;
       
-      const response = await openai.createChatCompletion({
-        model: 'deepseek-chat',
-        messages: [
-          { role: 'system', content: 'You are a language detector. Return only the 2-letter ISO 639-1 language code.' },
-          { role: 'user', content: prompt }
-        ],
-        temperature: 0.1,
-        max_tokens: 5
-      });
+      const response = await this.callDeepSeekAPI([
+        { role: 'system', content: 'You are a language detector. Return only the ISO 639-1 language code.' },
+        { role: 'user', content: prompt }
+      ]);
       
-      return response.data.choices[0]?.message?.content?.trim().toLowerCase() || 'en';
+      return response.choices[0]?.message?.content?.trim().toLowerCase() || 'en';
     } catch (error) {
       logger.error('Language detection failed', error);
       return 'en';
     }
   }
-  
+
   /**
    * Save analysis result to database
    */
@@ -418,51 +383,55 @@ export class EmailAnalysisService {
     try {
       const query = `
         INSERT INTO email_analysis (
-          email_id, sentiment, urgency, category, key_topics,
-          entities, summary, action_required, suggested_response,
-          confidence_score, language, analysis_version, processed_at
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-        ON CONFLICT (email_id) 
-        DO UPDATE SET
+          id,
+          email_id,
+          sentiment,
+          urgency,
+          category,
+          key_topics,
+          summary,
+          action_required,
+          suggested_response,
+          confidence,
+          processed_at,
+          created_at,
+          updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
+        ON CONFLICT (id) DO UPDATE SET
           sentiment = EXCLUDED.sentiment,
           urgency = EXCLUDED.urgency,
           category = EXCLUDED.category,
           key_topics = EXCLUDED.key_topics,
-          entities = EXCLUDED.entities,
           summary = EXCLUDED.summary,
           action_required = EXCLUDED.action_required,
           suggested_response = EXCLUDED.suggested_response,
-          confidence_score = EXCLUDED.confidence_score,
-          language = EXCLUDED.language,
-          analysis_version = EXCLUDED.analysis_version,
-          processed_at = EXCLUDED.processed_at
+          confidence = EXCLUDED.confidence,
+          processed_at = EXCLUDED.processed_at,
+          updated_at = NOW()
       `;
-      
+
       const values = [
+        result.id,
         result.emailId,
         result.sentiment,
         result.urgency,
         result.category,
-        result.keyTopics,
-        JSON.stringify(result.entities),
+        JSON.stringify(result.keyTopics),
         result.summary,
         result.actionRequired,
         result.suggestedResponse,
-        result.confidenceScore,
-        result.language,
-        result.analysisVersion,
+        result.confidence,
         result.processedAt
       ];
-      
+
       await database.query(query, values);
       logger.info('Analysis result saved to database', { emailId: result.emailId });
     } catch (error) {
-      logger.error('Failed to save analysis result', { emailId: result.emailId, error });
-      throw new DatabaseError('Failed to save analysis result');
+      logger.error('Failed to save analysis result', error);
+      throw new DatabaseError('Failed to save analysis result', error);
     }
   }
-  
+
   /**
    * Batch analyze multiple emails
    */
@@ -470,10 +439,10 @@ export class EmailAnalysisService {
     try {
       logger.info('Starting batch email analysis', { count: emails.length });
       
-      // Process in chunks to avoid rate limits
+      // Process in chunks to avoid overwhelming the API
       const chunkSize = 5;
       const results: EmailAnalysisResult[] = [];
-      
+
       for (let i = 0; i < emails.length; i += chunkSize) {
         const chunk = emails.slice(i, i + chunkSize);
         const chunkResults = await Promise.all(
@@ -481,17 +450,17 @@ export class EmailAnalysisService {
         );
         results.push(...chunkResults);
         
-        // Add delay between chunks to respect rate limits
+        // Add delay between chunks
         if (i + chunkSize < emails.length) {
           await new Promise(resolve => setTimeout(resolve, 1000));
         }
       }
-      
-      logger.info('Batch email analysis completed', { 
-        total: emails.length,
-        successful: results.length 
+
+      logger.info('Batch analysis completed', { 
+        total: emails.length, 
+        processed: results.length 
       });
-      
+
       return results;
     } catch (error) {
       logger.error('Batch analysis failed', error);
@@ -499,3 +468,5 @@ export class EmailAnalysisService {
     }
   }
 }
+
+export default EmailAnalysisService;

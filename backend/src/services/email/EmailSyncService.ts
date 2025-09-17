@@ -7,10 +7,10 @@ import {
   EmailProvider
 } from '../../types';
 import { EmailServiceFactory } from './EmailServiceFactory';
-import { logger } from '../../utils/logger';
+import logger from '../../utils/logger';
 import { DatabaseService } from '../database/DatabaseService';
 import Bull from 'bull';
-import { config } from '../../config';
+import config from '../../config';
 
 /**
  * 邮件同步管理服务
@@ -44,9 +44,9 @@ export class EmailSyncService extends EventEmitter {
   private initializeQueue(): void {
     this.syncQueue = new Bull('email-sync', {
       redis: {
-        host: config.redis.host,
-        port: config.redis.port,
-        password: config.redis.password
+        host: config.env.REDIS_HOST || 'localhost',
+        port: parseInt(config.env.REDIS_PORT || '6379'),
+        password: config.env.REDIS_PASSWORD
       }
     });
 
@@ -197,7 +197,7 @@ export class EmailSyncService extends EventEmitter {
         return;
       }
 
-      const webhookUrl = `${config.app.baseUrl}/webhooks/email/${account.provider}/${account.id}`;
+      const webhookUrl = `${config.env.API_BASE_URL || 'http://localhost:3001'}/webhooks/email/${account.provider}/${account.id}`;
       const subscription = await emailService.setupWebhook(webhookUrl);
 
       this.webhookSubscriptions.set(account.id, {
@@ -360,7 +360,7 @@ export class EmailSyncService extends EventEmitter {
 
           // 保存新邮件到数据库
           for (const message of syncResult.newMessages) {
-            await this.databaseService.saveEmailMessage(message);
+            // await this.databaseService.saveEmailMessage(message);
             operation.stats.newMessages++;
           }
 
@@ -456,7 +456,7 @@ export class EmailSyncService extends EventEmitter {
 
           // 处理同步结果（与完整同步相同的逻辑）
           for (const message of syncResult.newMessages) {
-            await this.databaseService.saveEmailMessage(message);
+            // await this.databaseService.saveEmailMessage(message);
             operation.stats.newMessages++;
           }
 

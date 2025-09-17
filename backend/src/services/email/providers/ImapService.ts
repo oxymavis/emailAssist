@@ -1,5 +1,5 @@
 import * as nodemailer from 'nodemailer';
-import { Connection } from 'imap';
+import * as Imap from 'imap';
 import { 
   OAuthTokens, 
   UnifiedEmailMessage, 
@@ -10,14 +10,14 @@ import {
   RateLimitConfig
 } from '../../../types';
 import { BaseEmailService } from '../BaseEmailService';
-import { logger } from '../../../utils/logger';
+import logger from '../../../utils/logger';
 
 /**
  * IMAP/SMTP通用邮件服务实现
  * 支持大多数邮件提供商的IMAP/SMTP协议
  */
 export class ImapService extends BaseEmailService {
-  private imapConnection?: Connection;
+  private imapConnection?: Imap;
   private smtpTransporter?: nodemailer.Transporter;
   private config: {
     imap: {
@@ -61,7 +61,7 @@ export class ImapService extends BaseEmailService {
       this.imapConnection = new (require('imap'))(this.config.imap);
       
       // 创建SMTP传输器
-      this.smtpTransporter = nodemailer.createTransporter({
+      this.smtpTransporter = nodemailer.createTransport({
         host: this.config.smtp.host,
         port: this.config.smtp.port,
         secure: this.config.smtp.secure,

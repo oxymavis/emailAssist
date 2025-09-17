@@ -339,19 +339,19 @@ export class FilterRuleEngine {
       try {
         switch (action.type) {
           case FilterActionType.MOVE_TO_FOLDER:
-            await this.moveToFolder(email.id, action.value);
+            await this.moveToFolder(email.id, action.value as string);
             break;
           
           case FilterActionType.MARK_AS_READ:
             await this.markAsRead(email.id, true);
             break;
           
-          case FilterActionType.MARK_AS_IMPORTANT:
+          case 'set_importance':
             await this.markAsImportant(email.id, true);
             break;
           
-          case FilterActionType.ADD_LABEL:
-            await this.addLabel(email.id, action.value);
+          case 'add_label':
+            await this.addLabel(email.id, action.value as string);
             break;
           
           case FilterActionType.DELETE:
@@ -362,20 +362,20 @@ export class FilterRuleEngine {
             await this.archiveEmail(email.id);
             break;
           
-          case FilterActionType.FORWARD:
-            await this.forwardEmail(email.id, action.value);
+          case 'forward':
+            await this.forwardEmail(email.id, Array.isArray(action.value) ? action.value : [action.value as string]);
             break;
           
-          case FilterActionType.AUTO_REPLY:
-            await this.sendAutoReply(email, action.value);
+          case 'reply':
+            await this.sendAutoReply(email, action.value as string);
             break;
           
-          case FilterActionType.TRIGGER_WORKFLOW:
-            await this.triggerWorkflow(email.id, action.value);
+          case 'create_task':
+            await this.triggerWorkflow(email.id, action.value as string);
             break;
           
-          case FilterActionType.NOTIFY:
-            await this.sendNotification(email, action.value);
+          case 'send_notification':
+            await this.sendNotification(email, action.value as string);
             break;
         }
         
@@ -573,9 +573,11 @@ export class FilterRuleEngine {
       isActive: row.is_active,
       stopProcessing: row.stop_processing,
       appliedCount: row.match_count,
-      lastAppliedAt: row.last_matched_at,
+      lastAppliedAt: row.last_matched_at as Date,
       createdAt: row.created_at,
-      updatedAt: row.updated_at
+      updatedAt: row.updated_at,
+      logicOperator: row.logic_operator || 'AND',
+      createdBy: row.created_by || row.user_id
     };
   }
   
@@ -602,10 +604,11 @@ export class FilterRuleEngine {
               operator: FilterOperator.EQUALS,
               value: sender.email
             }],
-            actions: [{
-              type: FilterActionType.MOVE_TO_FOLDER,
-              value: `From ${sender.name || sender.email}`
-            }],
+          actions: [{
+            type: FilterActionType.MOVE_TO_FOLDER,
+            value: `From ${sender.name || sender.email}`,
+            parameters: { folderName: `From ${sender.name || sender.email}` }
+          }],
             priority: 5
           });
         }
@@ -625,10 +628,12 @@ export class FilterRuleEngine {
           conditionLogic: 'OR',
           actions: [{
             type: FilterActionType.MOVE_TO_FOLDER,
-            value: 'Newsletters'
+            value: 'Newsletters',
+            parameters: { folderName: 'Newsletters' }
           }, {
             type: FilterActionType.MARK_AS_READ,
-            value: true
+            value: true,
+            parameters: { markAsRead: true }
           }],
           priority: 3
         });
@@ -646,11 +651,13 @@ export class FilterRuleEngine {
           value: ['high', 'critical']
         }],
         actions: [{
-          type: FilterActionType.MARK_AS_IMPORTANT,
-          value: true
+          type: 'set_importance',
+          value: 'high',
+          parameters: { importance: 'high' }
         }, {
-          type: FilterActionType.NOTIFY,
-          value: { type: 'push', message: 'High priority email received' }
+          type: 'send_notification',
+          value: 'High priority email received',
+          parameters: { type: 'push', message: 'High priority email received' }
         }],
         priority: 10
       });

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Box,
@@ -18,6 +18,11 @@ import {
   Paper,
   Divider,
   useTheme,
+  Switch,
+  FormControlLabel,
+  Fab,
+  Tooltip,
+  Badge,
 } from '@mui/material';
 import {
   Email as EmailIcon,
@@ -29,15 +34,37 @@ import {
   AutoAwesome as AutoAwesomeIcon,
   Sync as SyncIcon,
   Refresh as RefreshIcon,
+  Edit as EditIcon,
+  Dashboard as DashboardIcon,
+  GridView as GridViewIcon,
+  Settings as SettingsIcon,
+  GetApp as ExportIcon,
+  Fullscreen as FullscreenIcon,
+  WifiOutlined,
+  WifiOffOutlined,
 } from '@mui/icons-material';
-import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, LineChart, Line } from 'recharts';
+import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, LineChart, Line } from 'recharts';
 import { format } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
 
 import { LoadingState, SkeletonCard } from '@/components/common/Loading';
-import { useDashboardStats, useEmails, useNotifications } from '@/store';
-import { mockDataService } from '@/services/mockData';
+import { 
+  useDashboardStats, 
+  useEmails, 
+  useNotifications, 
+  useDashboardState, 
+  useChartData 
+} from '@/store';
+import realApiService from '@/services/realApi';
+import AdvancedChartMockDataService from '@/services/advancedChartMockData';
 import { sentimentColors } from '@/themes';
+
+// 引入高级仪表板组件
+import DashboardGrid from '@/components/dashboard/DashboardGrid';
+import DashboardFilters from '@/components/dashboard/DashboardFilters';
+import DrillDownDialog from '@/components/dashboard/DrillDownDialog';
+import DataExportDialog from '@/components/dashboard/DataExportDialog';
+import useRealtimeData from '@/hooks/useRealtimeData';
 
 // 统计卡片组件
 interface StatsCardProps {
@@ -196,7 +223,7 @@ const SentimentChart: React.FC<{ data: any[] }> = ({ data }) => {
               <Cell key={`cell-${index}`} fill={entry.color} />
             ))}
           </Pie>
-          <Tooltip />
+          <RechartsTooltip />
         </PieChart>
       </ResponsiveContainer>
     </CardContent>
@@ -218,7 +245,7 @@ const TrendChart: React.FC<{ data: any[] }> = ({ data }) => {
           <CartesianGrid strokeDasharray="3 3" />
           <XAxis dataKey="date" />
           <YAxis />
-          <Tooltip />
+          <RechartsTooltip />
           <Line type="monotone" dataKey="emails" stroke="#2196F3" name={t('dashboard.emailVolume')} />
           <Line type="monotone" dataKey="processed" stroke="#4CAF50" name={t('common.processed')} />
           <Line type="monotone" dataKey="urgent" stroke="#F44336" name={t('common.urgent')} />
@@ -243,7 +270,7 @@ const TrendChart: React.FC<{ data: any[] }> = ({ data }) => {
           <CartesianGrid strokeDasharray="3 3" />
           <XAxis dataKey="name" />
           <YAxis />
-          <Tooltip />
+          <RechartsTooltip />
           <Bar dataKey="value" fill="#FF9800" />
         </BarChart>
       </ResponsiveContainer>
@@ -258,9 +285,28 @@ const Dashboard: React.FC = () => {
   const { stats, setStats } = useDashboardStats();
   const { emails, setEmails, selectEmail } = useEmails();
   const { addNotification } = useNotifications();
+  const { dashboardState, setEditMode } = useDashboardState();
+  const {
+    setEmailVolumeData,
+    setSentimentData,
+    setCategoryData,
+    setPriorityHeatmapData,
+    setResponseTimeData,
+    setTopSendersData,
+  } = useChartData();
   
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [isAdvancedMode, setIsAdvancedMode] = useState(true);
+  const [drillDownOpen, setDrillDownOpen] = useState(false);
+  const [drillDownData, setDrillDownData] = useState<any>(null);
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [selectedWidget, setSelectedWidget] = useState<any>(null);
+
+  // 实时数据连接
+  const { isConnected, isConnecting, connectionAttempts } = useRealtimeData({
+    enabled: isAdvancedMode,
+  });
 
   // 初始化数据
   useEffect(() => {
@@ -271,18 +317,47 @@ const Dashboard: React.FC = () => {
         // 模拟API调用延迟
         await new Promise(resolve => setTimeout(resolve, 1000));
         
-        // 获取模拟数据
-        const mockEmails = mockDataService.getEmails(30);
-        const mockStats = mockDataService.getDashboardStats();
+        if (isAdvancedMode) {
+          // 加载高级图表数据
+          const advancedData = AdvancedChartMockDataService.generateDashboardData({
+            days: 30,
+            includeRealtime: true,
+          });
+          
+          // 设置图表数据
+          setEmailVolumeData(advancedData.emailVolumeData);
+          setSentimentData(advancedData.sentimentData);
+          setCategoryData(advancedData.categoryData);
+          setPriorityHeatmapData(advancedData.priorityHeatmapData);
+          setResponseTimeData(advancedData.responseTimeData);
+          setTopSendersData(advancedData.topSendersData);
+        }
         
-        setEmails(mockEmails);
-        setStats(mockStats);
+        // 获取真实数据
+        try {
+          const [emailsData, statsData] = await Promise.all([
+            realApiService.email.getEmails({ limit: 30 }),
+            realApiService.stats.getDashboardStats()
+          ]);
+
+          setEmails(emailsData.emails || []);
+          setStats(statsData || {});
+        } catch (apiError) {
+          console.warn('API调用失败，使用模拟数据:', apiError);
+          // Fallback to mock data if API fails
+          const { mockDataService } = await import('@/services/mockData');
+          const mockEmails = mockDataService.getEmails(30);
+          const mockStats = mockDataService.getDashboardStats();
+
+          setEmails(mockEmails);
+          setStats(mockStats);
+        }
         
         // 添加欢迎通知
         addNotification({
-          type: 'info',
-          title: t('dashboard.welcomeMessage'),
-          message: t('common.dataLoaded'),
+          type: 'success',
+          title: isAdvancedMode ? t('dashboard.advancedModeEnabled') : t('dashboard.welcomeMessage'),
+          message: isAdvancedMode ? t('dashboard.advancedFeaturesLoaded') : t('common.dataLoaded'),
         });
       } catch (error) {
         console.error('Dashboard initialization failed:', error);
@@ -297,7 +372,7 @@ const Dashboard: React.FC = () => {
     };
 
     initializeDashboard();
-  }, [setEmails, setStats, addNotification]);
+  }, [isAdvancedMode]); // Only depend on isAdvancedMode, other setters are stable
 
   // 刷新数据
   const handleRefresh = async () => {
@@ -305,11 +380,21 @@ const Dashboard: React.FC = () => {
     try {
       await new Promise(resolve => setTimeout(resolve, 800));
       
-      const mockStats = mockDataService.getDashboardStats();
-      setStats({
-        ...mockStats,
-        lastSyncTime: new Date().toISOString(),
-      });
+      try {
+        const statsData = await realApiService.stats.getDashboardStats();
+        setStats({
+          ...statsData,
+          lastSyncTime: new Date().toISOString(),
+        });
+      } catch (apiError) {
+        console.warn('API刷新失败，使用模拟数据:', apiError);
+        const { mockDataService } = await import('@/services/mockData');
+        const mockStats = mockDataService.getDashboardStats();
+        setStats({
+          ...mockStats,
+          lastSyncTime: new Date().toISOString(),
+        });
+      }
       
       addNotification({
         type: 'success',
@@ -337,6 +422,38 @@ const Dashboard: React.FC = () => {
     });
   };
 
+  // 处理数据钻取
+  const handleDataDrillDown = (data: any, title: string) => {
+    setDrillDownData({ ...data, title });
+    setDrillDownOpen(true);
+  };
+
+  // 处理数据导出
+  const handleDataExport = (widgetId?: string, widgetTitle?: string) => {
+    setSelectedWidget({ id: widgetId, title: widgetTitle });
+    setExportDialogOpen(true);
+  };
+
+  // 切换编辑模式
+  const handleToggleEditMode = () => {
+    setEditMode(!dashboardState.isEditMode);
+    addNotification({
+      type: 'info',
+      title: dashboardState.isEditMode ? t('dashboard.editModeOff') : t('dashboard.editModeOn'),
+      message: dashboardState.isEditMode ? t('dashboard.editModeOffDesc') : t('dashboard.editModeOnDesc'),
+    });
+  };
+
+  // 切换高级模式
+  const handleToggleAdvancedMode = () => {
+    setIsAdvancedMode(!isAdvancedMode);
+    addNotification({
+      type: 'info',
+      title: !isAdvancedMode ? t('dashboard.advancedModeEnabled') : t('dashboard.basicModeEnabled'),
+      message: !isAdvancedMode ? t('dashboard.advancedModeDesc') : t('dashboard.basicModeDesc'),
+    });
+  };
+
   // 生成图表数据
   const sentimentData = [
     { name: t('common.positive'), value: 132, color: sentimentColors.positive },
@@ -344,35 +461,121 @@ const Dashboard: React.FC = () => {
     { name: t('common.negative'), value: 13, color: sentimentColors.negative },
   ];
 
-  const trendData = mockDataService.getTrendData(7);
-  const categoryData = mockDataService.getCategoryStats().slice(0, 6);
+  // 生成图表数据 - 暂时使用基础数据，未来可从API获取
+  const trendData = useMemo(() => {
+    return Array.from({ length: 7 }, (_, i) => ({
+      name: format(new Date(Date.now() - i * 24 * 60 * 60 * 1000), 'MM/dd'),
+      emails: Math.floor(Math.random() * 50) + 10,
+      analyzed: Math.floor(Math.random() * 30) + 5
+    })).reverse();
+  }, []);
+
+  const categoryData = useMemo(() => {
+    return [
+      { name: t('mockData.categories.work'), count: 45, percentage: 25 },
+      { name: t('mockData.categories.meeting'), count: 32, percentage: 18 },
+      { name: t('mockData.categories.project'), count: 28, percentage: 16 },
+      { name: t('mockData.categories.customer'), count: 24, percentage: 14 },
+      { name: t('mockData.categories.system'), count: 20, percentage: 11 },
+      { name: t('mockData.categories.marketing'), count: 28, percentage: 16 }
+    ];
+  }, [t]);
 
   return (
     <Box>
       {/* 页面标题和操作 */}
       <Box display="flex" justifyContent="space-between" alignItems="center" sx={{ mb: 3 }}>
         <Box>
-          <Typography variant="h4" fontWeight="bold" gutterBottom>
-            {t('dashboard.title')}
-          </Typography>
+          <Box display="flex" alignItems="center" gap={2}>
+            <Typography variant="h4" fontWeight="bold">
+              {isAdvancedMode ? t('dashboard.advancedTitle') : t('dashboard.title')}
+            </Typography>
+            <Chip 
+              icon={isAdvancedMode ? <DashboardIcon /> : <GridViewIcon />}
+              label={isAdvancedMode ? t('dashboard.advancedMode') : t('dashboard.basicMode')}
+              color={isAdvancedMode ? 'primary' : 'default'}
+              variant="outlined"
+            />
+            {isAdvancedMode && (
+              <Badge 
+                color={isConnected ? 'success' : 'error'}
+                variant="dot"
+                title={isConnected ? t('dashboard.realtimeConnected') : t('dashboard.realtimeDisconnected')}
+              >
+                {isConnected ? <WifiOutlined color="success" /> : <WifiOffOutlined color="disabled" />}
+              </Badge>
+            )}
+          </Box>
           <Typography variant="body1" color="text.secondary">
-            {t('dashboard.welcomeMessage')}
+            {isAdvancedMode ? t('dashboard.advancedWelcome') : t('dashboard.welcomeMessage')}
           </Typography>
         </Box>
-        <Box display="flex" gap={1}>
+        <Box display="flex" alignItems="center" gap={1}>
+          <FormControlLabel
+            control={
+              <Switch
+                checked={isAdvancedMode}
+                onChange={handleToggleAdvancedMode}
+                color="primary"
+              />
+            }
+            label={t('dashboard.advancedMode')}
+          />
+          
+          {isAdvancedMode && (
+            <>
+              <Button
+                variant="outlined"
+                size="small"
+                startIcon={<EditIcon />}
+                onClick={handleToggleEditMode}
+                color={dashboardState.isEditMode ? 'secondary' : 'primary'}
+              >
+                {dashboardState.isEditMode ? t('dashboard.exitEdit') : t('dashboard.editLayout')}
+              </Button>
+              
+              <Button
+                variant="outlined"
+                size="small"
+                startIcon={<ExportIcon />}
+                onClick={() => handleDataExport()}
+              >
+                {t('dashboard.export')}
+              </Button>
+            </>
+          )}
+          
           <Button
             variant="outlined"
             startIcon={<SyncIcon />}
             onClick={handleRefresh}
             disabled={refreshing}
+            size={isAdvancedMode ? 'small' : 'medium'}
           >
-{refreshing ? t('dashboard.syncing') : t('dashboard.syncData')}
+            {refreshing ? t('dashboard.syncing') : t('dashboard.syncData')}
           </Button>
+          
           <IconButton onClick={handleRefresh} disabled={refreshing}>
             <RefreshIcon />
           </IconButton>
         </Box>
       </Box>
+
+      {/* 高级模式筛选器 */}
+      {isAdvancedMode && (
+        <Box sx={{ mb: 3 }}>
+          <DashboardFilters
+            onFiltersChange={(filters) => {
+              console.log('Filters changed:', filters);
+              // 这里可以重新加载数据
+            }}
+            onTimeRangeChange={(timeRange) => {
+              console.log('Time range changed:', timeRange);
+              // 这里可以基于时间范围重新加载数据
+            }}
+          />
+        </Box>
+      )}
 
       <LoadingState 
         loading={loading} 
@@ -481,42 +684,124 @@ const Dashboard: React.FC = () => {
           </Grid>
         </Grid>
 
-        {/* 图表和邮件列表 */}
-        <Grid container spacing={3}>
-          <Grid item xs={12} md={8}>
+        {/* 主要内容区域 */}
+        {isAdvancedMode ? (
+          <>
+            {/* 高级仪表板网格 */}
+            <DashboardGrid
+              onWidgetClick={(widget) => {
+                console.log('Widget clicked:', widget);
+                // 可以打开组件设置对话框
+              }}
+              onLayoutChange={(layouts) => {
+                console.log('Layout changed:', layouts);
+              }}
+            />
+          </>
+        ) : (
+          <>
+            {/* 传统图表和邮件列表 */}
             <Grid container spacing={3}>
-              <Grid item xs={12}>
-                <TrendChart data={trendData} />
+              <Grid item xs={12} md={8}>
+                <Grid container spacing={3}>
+                  <Grid item xs={12}>
+                    <TrendChart data={trendData} />
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <SentimentChart data={sentimentData} />
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <CategoryChart data={categoryData} />
+                  </Grid>
+                </Grid>
               </Grid>
-              <Grid item xs={12} md={6}>
-                <SentimentChart data={sentimentData} />
-              </Grid>
-              <Grid item xs={12} md={6}>
-                <CategoryChart data={categoryData} />
+              <Grid item xs={12} md={4}>
+                <RecentEmails emails={emails} onEmailClick={handleEmailClick} />
               </Grid>
             </Grid>
-          </Grid>
-          <Grid item xs={12} md={4}>
-            <RecentEmails emails={emails} onEmailClick={handleEmailClick} />
-          </Grid>
-        </Grid>
+          </>
+        )}
 
         {/* 同步状态 */}
         <Paper sx={{ p: 2, mt: 3, bgcolor: 'background.default' }}>
-          <Box display="flex" alignItems="center" justifyContent="between">
-            <Typography variant="body2" color="text.secondary">
-{t('dashboard.lastSyncTime')}: {format(new Date(stats.lastSyncTime), 'yyyy-MM-dd HH:mm:ss', { locale: zhCN })}
-            </Typography>
-            <Chip
-              label={t('dashboard.connectedToGraph')}
-              color="success"
-              variant="outlined"
-              size="small"
-              sx={{ ml: 'auto' }}
-            />
+          <Box display="flex" alignItems="center" justifyContent="space-between">
+            <Box display="flex" alignItems="center" gap={2}>
+              <Typography variant="body2" color="text.secondary">
+                {t('dashboard.lastSyncTime')}: {format(new Date(stats.lastSyncTime), 'yyyy-MM-dd HH:mm:ss', { locale: zhCN })}
+              </Typography>
+              {isAdvancedMode && isConnecting && (
+                <Chip
+                  label={`${t('dashboard.reconnecting')} (${connectionAttempts})`}
+                  color="warning"
+                  variant="outlined"
+                  size="small"
+                />
+              )}
+            </Box>
+            <Box display="flex" alignItems="center" gap={1}>
+              <Chip
+                label={isAdvancedMode && isConnected ? t('dashboard.realtimeActive') : t('dashboard.connectedToGraph')}
+                color={isAdvancedMode && isConnected ? 'primary' : 'success'}
+                variant="outlined"
+                size="small"
+              />
+              {isAdvancedMode && (
+                <Chip
+                  label={`${dashboardState.widgets.length} ${t('dashboard.widgets')}`}
+                  color="info"
+                  variant="outlined"
+                  size="small"
+                />
+              )}
+            </Box>
           </Box>
         </Paper>
       </LoadingState>
+
+      {/* 数据钻取对话框 */}
+      <DrillDownDialog
+        open={drillDownOpen}
+        onClose={() => setDrillDownOpen(false)}
+        initialData={drillDownData}
+        title={drillDownData?.title}
+      />
+
+      {/* 数据导出对话框 */}
+      <DataExportDialog
+        open={exportDialogOpen}
+        onClose={() => setExportDialogOpen(false)}
+        widgetId={selectedWidget?.id}
+        widgetTitle={selectedWidget?.title}
+      />
+
+      {/* 高级模式浮动操作按钮 */}
+      {isAdvancedMode && !dashboardState.isEditMode && (
+        <Box sx={{ position: 'fixed', bottom: 24, left: 24, zIndex: 1300 }}>
+          <Tooltip title={t('dashboard.quickActions')}>
+            <Fab 
+              color="secondary" 
+              size="small"
+              onClick={() => handleDataExport()}
+              sx={{ mr: 1 }}
+            >
+              <ExportIcon />
+            </Fab>
+          </Tooltip>
+          <Tooltip title={t('dashboard.fullscreenMode')}>
+            <Fab 
+              color="default" 
+              size="small"
+              onClick={() => {
+                if (document.documentElement.requestFullscreen) {
+                  document.documentElement.requestFullscreen();
+                }
+              }}
+            >
+              <FullscreenIcon />
+            </Fab>
+          </Tooltip>
+        </Box>
+      )}
     </Box>
   );
 };

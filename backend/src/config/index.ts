@@ -85,7 +85,16 @@ class Config {
       // AI Analysis Configuration
       AI_ANALYSIS_CACHE_TTL: parseInt(process.env.AI_ANALYSIS_CACHE_TTL || '3600', 10),
       AI_BATCH_SIZE: parseInt(process.env.AI_BATCH_SIZE || '10', 10),
-      AI_ANALYSIS_TIMEOUT: parseInt(process.env.AI_ANALYSIS_TIMEOUT || '30000', 10)
+      AI_ANALYSIS_TIMEOUT: parseInt(process.env.AI_ANALYSIS_TIMEOUT || '30000', 10),
+      
+      // Redis Configuration
+      REDIS_HOST: process.env.REDIS_HOST || 'localhost',
+      REDIS_PORT: process.env.REDIS_PORT || '6379',
+      REDIS_PASSWORD: process.env.REDIS_PASSWORD || '',
+      REDIS_DB: process.env.REDIS_DB || '0',
+      
+      // API Configuration
+      API_BASE_URL: process.env.API_BASE_URL || 'http://localhost:3001'
     };
   }
 

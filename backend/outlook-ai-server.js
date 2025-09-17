@@ -52,6 +52,59 @@ function generateState() {
   return crypto.randomBytes(32).toString('hex');
 }
 
+// Group emails by conversation - similar to Outlook's conversation view
+function groupEmailsByConversation(emails) {
+  const conversationMap = new Map();
+
+  emails.forEach(email => {
+    // Use conversationId from Microsoft Graph, or fallback to normalized subject
+    let groupKey = email.conversationId;
+
+    if (!groupKey) {
+      // Fallback: normalize subject by removing common prefixes
+      const normalizedSubject = email.subject
+        .replace(/^(Re|RE|Fw|FW|Fwd|FWD):\s*/gi, '')
+        .trim()
+        .toLowerCase();
+      groupKey = normalizedSubject;
+    }
+
+    if (!conversationMap.has(groupKey)) {
+      conversationMap.set(groupKey, {
+        conversationId: email.conversationId || groupKey,
+        subject: email.subject,
+        emails: [],
+        latestDate: email.receivedAt,
+        totalEmails: 0,
+        unreadCount: 0,
+        hasAiAnalysis: false
+      });
+    }
+
+    const conversation = conversationMap.get(groupKey);
+    conversation.emails.push(email);
+    conversation.totalEmails++;
+
+    if (!email.isRead) {
+      conversation.unreadCount++;
+    }
+
+    if (email.hasAiAnalysis) {
+      conversation.hasAiAnalysis = true;
+    }
+
+    // Update latest date if this email is newer
+    if (new Date(email.receivedAt) > new Date(conversation.latestDate)) {
+      conversation.latestDate = email.receivedAt;
+      conversation.subject = email.subject; // Use the most recent subject
+    }
+  });
+
+  // Convert map to array and sort by latest date
+  return Array.from(conversationMap.values())
+    .sort((a, b) => new Date(b.latestDate) - new Date(a.latestDate));
+}
+
 /**
  * AI Analysis Service using DeepSeek API
  */
@@ -186,6 +239,340 @@ class AIAnalysisService {
       .slice(0, 5);
 
     return words.length > 0 ? words : ['邮件'];
+  }
+
+  // 增强的对话上下文分析功能
+  static async analyzeEmailWithConversationContext(currentEmail, conversationHistory = []) {
+    try {
+      console.log(`🔍 Starting contextual AI analysis for conversation: "${currentEmail.subject.substring(0, 50)}..."`);
+      console.log(`📚 Using ${conversationHistory.length} historical emails for context`);
+
+      // Create cache key that includes conversation context
+      const contextCacheKey = crypto.createHash('md5')
+        .update(`${currentEmail.id}${conversationHistory.map(e => e.id).join('')}`)
+        .digest('hex');
+
+      // Check cache first
+      if (analysisCache.has(contextCacheKey)) {
+        console.log('📋 Using cached contextual analysis result');
+        return analysisCache.get(contextCacheKey);
+      }
+
+      // Build conversation timeline (oldest to newest)
+      const timeline = [...conversationHistory.reverse(), currentEmail];
+
+      // Extract conversation context
+      const conversationSummary = timeline.slice(0, -1).map((email, index) => {
+        return `邮件${index + 1}(${new Date(email.receivedAt).toLocaleDateString()}):
+发件人: ${email.from.name || email.from.address}
+主题: ${email.subject}
+内容摘要: ${email.preview || (email.body?.content || '').substring(0, 200)}...`;
+      }).join('\n\n');
+
+      // Enhanced prompt with conversation context
+      const prompt = `请基于完整的邮件对话上下文来分析当前邮件，提供更智能的分析结果：
+
+## 对话历史背景 (${conversationHistory.length} 封历史邮件):
+${conversationSummary}
+
+## 当前待分析邮件:
+主题: ${currentEmail.subject}
+发件人: ${currentEmail.from.name || currentEmail.from.address} (${currentEmail.from.address})
+重要性: ${currentEmail.importance}
+接收时间: ${new Date(currentEmail.receivedAt).toLocaleString()}
+内容: ${currentEmail.preview || (currentEmail.body?.content || '').substring(0, 1000)}
+
+## 分析要求:
+请基于完整的对话上下文，分析当前邮件并返回JSON格式结果：
+{
+  "sentiment": "positive|neutral|negative",
+  "urgency": "low|medium|high|critical",
+  "category": "工作|个人|营销|通知|会议|项目|客户服务|其他",
+  "keywords": ["关键词1", "关键词2", "关键词3"],
+  "summary": "基于对话上下文的智能摘要(80字以内)",
+  "actionRequired": true/false,
+  "suggestedActions": ["基于上下文的建议操作1", "建议操作2"],
+  "confidence": 0.85,
+  "conversationContext": {
+    "isResponse": true/false,
+    "responseToWhom": "回复给谁",
+    "conversationStage": "initial|ongoing|conclusion|followup",
+    "relationshipContext": "首次联系|持续沟通|紧急事项|例行更新",
+    "historicalSentiment": "历史对话的整体情感趋势",
+    "escalationLevel": "问题升级程度(如果适用)"
+  }
+}`;
+
+      // Call DeepSeek API with enhanced context
+      const response = await fetch(`${DEEPSEEK_CONFIG.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${DEEPSEEK_CONFIG.apiKey}`
+        },
+        body: JSON.stringify({
+          model: DEEPSEEK_CONFIG.model,
+          messages: [
+            {
+              role: 'system',
+              content: '你是一个专业的邮件对话分析专家，擅长基于邮件历史上下文提供深度分析。请分析邮件对话的发展脉络、参与者关系、情感演变和业务背景，并提供精准的分析结果。始终返回有效的JSON格式。'
+            },
+            {
+              role: 'user',
+              content: prompt
+            }
+          ],
+          max_tokens: 1000,
+          temperature: 0.3
+        })
+      });
+
+      if (!response.ok) {
+        console.error(`DeepSeek API error: ${response.status}`);
+        throw new Error(`AI analysis API error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      const content = data.choices?.[0]?.message?.content;
+
+      if (!content) {
+        throw new Error('No content in AI response');
+      }
+
+      // Parse AI response
+      let analysis;
+      try {
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        analysis = JSON.parse(jsonMatch ? jsonMatch[0] : content);
+      } catch (parseError) {
+        console.warn('Failed to parse AI response as JSON, creating fallback analysis');
+        analysis = {
+          sentiment: 'neutral',
+          urgency: currentEmail.importance === 'high' ? 'high' : 'medium',
+          category: '工作',
+          keywords: AIAnalysisService.extractSimpleKeywords(currentEmail.subject + ' ' + (currentEmail.preview || '')),
+          summary: `对话上下文分析：${currentEmail.subject} (共${timeline.length}封邮件)`,
+          actionRequired: true,
+          suggestedActions: ['查看完整对话', '及时回复'],
+          confidence: 0.6,
+          conversationContext: {
+            isResponse: conversationHistory.length > 0,
+            responseToWhom: conversationHistory.length > 0 ? conversationHistory[0].from.name : 'N/A',
+            conversationStage: conversationHistory.length === 0 ? 'initial' : 'ongoing',
+            relationshipContext: '持续沟通',
+            historicalSentiment: 'neutral',
+            escalationLevel: 'normal'
+          }
+        };
+      }
+
+      // Add metadata
+      analysis.analyzedAt = new Date().toISOString();
+      analysis.model = DEEPSEEK_CONFIG.model;
+      analysis.analysisType = 'contextual';
+      analysis.contextSize = conversationHistory.length;
+
+      // Cache the result
+      analysisCache.set(contextCacheKey, analysis);
+      console.log(`✅ Contextual AI analysis completed for conversation with ${conversationHistory.length} historical emails`);
+
+      return analysis;
+
+    } catch (error) {
+      console.error('Contextual AI analysis failed:', error);
+
+      // Fallback to simple analysis
+      console.log('🔄 Falling back to simple email analysis');
+      return await AIAnalysisService.analyzeEmailContent(
+        currentEmail.subject,
+        currentEmail.preview || currentEmail.body?.content || '',
+        currentEmail.from.address,
+        currentEmail.importance
+      );
+    }
+  }
+
+  // Analyze entire conversation thread
+  static async analyzeConversationThread(conversation) {
+    if (!DEEPSEEK_CONFIG.apiKey) {
+      return {
+        summary: "AI分析需要配置API密钥",
+        priority: "normal",
+        category: "未分类",
+        action_required: false,
+        sentiment: "neutral",
+        confidence: 0.0,
+        thread_summary: "需要配置DeepSeek API密钥",
+        key_participants: [],
+        timeline_analysis: "分析不可用",
+        business_impact: "unknown"
+      };
+    }
+
+    try {
+      console.log(`🧠 Analyzing conversation thread: ${conversation.subject} (${conversation.totalEmails} emails)`);
+
+      // Create conversation cache key based on conversation ID and email count
+      const cacheKeyData = `${conversation.conversationId}-${conversation.totalEmails}-${conversation.latestDate}`;
+      const conversationCacheKey = crypto.createHash('md5')
+        .update(cacheKeyData)
+        .digest('hex');
+
+      console.log(`🔍 Cache lookup for conversation: ${conversation.subject} | Key data: ${cacheKeyData} | Cache has: ${analysisCache.has(conversationCacheKey)}`);
+
+      // Check cache first
+      if (analysisCache.has(conversationCacheKey)) {
+        console.log('📋 Using cached conversation analysis result');
+        return analysisCache.get(conversationCacheKey);
+      }
+
+      // Prepare conversation context
+      const conversationContext = conversation.emails
+        .sort((a, b) => new Date(a.receivedAt) - new Date(b.receivedAt))
+        .map((email, index) => {
+          return `邮件 ${index + 1} (${email.receivedAt}):
+主题: ${email.subject}
+发件人: ${email.from.name} <${email.from.address}>
+内容: ${email.preview}
+${email.aiAnalysis ? `单邮件分析: ${email.aiAnalysis.summary}` : ''}
+---`;
+        }).join('\n');
+
+      const prompt = `请分析这个邮件对话线程，提供整体的业务洞察和建议。
+
+对话主题: ${conversation.subject}
+邮件数量: ${conversation.totalEmails}
+时间跨度: ${conversation.emails[0]?.receivedAt} 至 ${conversation.latestDate}
+未读邮件: ${conversation.unreadCount}
+
+完整对话内容:
+${conversationContext}
+
+请提供JSON格式的分析结果:
+{
+  "summary": "对话线程的整体总结（2-3句话）",
+  "priority": "high|medium|low - 基于业务重要性",
+  "category": "技术支持|业务洽谈|项目协调|日常事务|紧急问题|其他",
+  "action_required": true/false - 是否需要立即行动,
+  "sentiment": "positive|negative|neutral|mixed - 整体情感倾向",
+  "confidence": 0.0-1.0,
+  "thread_summary": "详细的对话发展脉络和关键节点分析",
+  "key_participants": ["主要参与者列表"],
+  "timeline_analysis": "时间线分析和发展趋势",
+  "business_impact": "对业务的潜在影响和建议",
+  "next_steps": "建议的后续行动步骤"
+}`;
+
+      const response = await fetch(`${DEEPSEEK_CONFIG.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${DEEPSEEK_CONFIG.apiKey}`
+        },
+        body: JSON.stringify({
+          model: DEEPSEEK_CONFIG.model,
+          messages: [
+            {
+              role: 'system',
+              content: '你是一个专业的邮件对话线程分析专家，擅长分析邮件对话的发展脉络、业务影响和提供实用建议。请基于完整的对话历史提供深度分析。始终返回有效的JSON格式。'
+            },
+            {
+              role: 'user',
+              content: prompt
+            }
+          ],
+          max_tokens: 1200,
+          temperature: 0.3
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`DeepSeek API error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      const content = data.choices?.[0]?.message?.content;
+
+      if (!content) {
+        throw new Error('No content in AI response');
+      }
+
+      let analysis;
+      try {
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        analysis = JSON.parse(jsonMatch ? jsonMatch[0] : content);
+      } catch (parseError) {
+        console.warn('Failed to parse conversation analysis as JSON, creating fallback');
+        analysis = {
+          summary: content.substring(0, 200) + '...',
+          priority: "medium",
+          category: "业务邮件",
+          action_required: conversation.unreadCount > 0,
+          sentiment: "neutral",
+          confidence: 0.7,
+          thread_summary: "对话线程分析",
+          key_participants: [...new Set(conversation.emails.map(e => e.from.name))],
+          timeline_analysis: `对话包含${conversation.totalEmails}封邮件`,
+          business_impact: "需要进一步分析",
+          next_steps: conversation.unreadCount > 0 ? "回复未读邮件" : "持续关注"
+        };
+      }
+
+      console.log(`✅ Conversation analysis completed for: ${conversation.subject}`);
+      return analysis;
+
+    } catch (error) {
+      console.error('Conversation analysis error:', error);
+      console.log('🔄 Using fallback conversation analysis');
+
+      // Smart fallback analysis based on email content
+      const subject = conversation.subject || '';
+      const firstEmail = conversation.emails[0];
+      const preview = firstEmail?.bodyPreview || '';
+
+      // Basic categorization based on keywords
+      let category = "日常事务";
+      let priority = "medium";
+      let sentiment = "neutral";
+
+      if (subject.match(/urgent|紧急|急|critical|asap/i) || preview.match(/urgent|紧急|急/i)) {
+        priority = "high";
+        category = "紧急问题";
+      } else if (subject.match(/EDI|implementation|project|合作|项目/i)) {
+        category = "项目协调";
+        priority = "high";
+      } else if (subject.match(/password|reset|support|问题|help/i)) {
+        category = "技术支持";
+      } else if (subject.match(/order|report|订单|报告/i)) {
+        category = "业务洽谈";
+      }
+
+      if (preview.match(/thank|good|excellent|perfect|感谢|很好/i)) {
+        sentiment = "positive";
+      } else if (preview.match(/issue|problem|error|fail|问题|错误|失败/i)) {
+        sentiment = "negative";
+      }
+
+      const analysisResult = {
+        summary: `${conversation.subject} - 包含${conversation.totalEmails}封邮件的对话线程`,
+        priority: priority,
+        category: category,
+        action_required: conversation.unreadCount > 0,
+        sentiment: sentiment,
+        confidence: 0.6,
+        thread_summary: `这是一个关于"${conversation.subject}"的邮件对话线程，包含${conversation.totalEmails}封邮件，其中${conversation.unreadCount}封未读。`,
+        key_participants: [...new Set(conversation.emails.map(e => e.from.name))],
+        timeline_analysis: `对话从${conversation.emails[0]?.receivedAt}开始，最新邮件时间为${conversation.latestDate}`,
+        business_impact: priority === "high" ? "高优先级，需要及时处理" : "正常业务流程，按计划处理",
+        next_steps: conversation.unreadCount > 0 ? "回复未读邮件并跟进处理" : "持续关注后续发展"
+      };
+
+      // Cache the conversation analysis result
+      analysisCache.set(conversationCacheKey, analysisResult);
+      console.log(`✅ Conversation analysis completed for: ${conversation.subject}`);
+
+      return analysisResult;
+    }
   }
 }
 
@@ -390,18 +777,22 @@ app.get('/api/email/unread', async (req, res) => {
     console.log(`📧 Fetching all emails from Inbox for: ${userTokens.email} (page: ${page}, size: ${pageSize}, search: "${search}")`);
 
     // Build Microsoft Graph API URL with pagination and search
-    let apiUrl = `https://graph.microsoft.com/v1.0/me/mailFolders/Inbox/messages?$orderby=receivedDateTime desc&$select=id,subject,from,receivedDateTime,bodyPreview,body,isRead,hasAttachments,importance,conversationId,webLink&$count=true`;
+    // Simplified query to avoid "too complex" error - removed some non-essential fields
+    let apiUrl = `https://graph.microsoft.com/v1.0/me/mailFolders/Inbox/messages?$orderby=receivedDateTime desc&$select=id,subject,from,receivedDateTime,bodyPreview,isRead,conversationId&$count=true`;
 
     // Build filter query - fetch all emails from Inbox (both read and unread)
     let filters = [];
 
     if (search.trim()) {
-      // Escape single quotes in search term for OData filter
-      const escapedSearch = search.replace(/'/g, "''");
-      // Search only in supported fields: subject, from name, and from address
-      // Note: bodyPreview does not support filtering in Microsoft Graph API
-      const searchFilter = `(contains(subject,'${escapedSearch}') or contains(from/emailAddress/name,'${escapedSearch}') or contains(from/emailAddress/address,'${escapedSearch}'))`;
-      filters.push(searchFilter);
+      // Use Microsoft Graph search parameter instead of OData filter for better compatibility
+      // Note: We'll use the $search parameter for search functionality
+      console.log(`🔍 Using Microsoft Graph $search for: "${search}"`);
+    }
+
+    // Add search parameter if provided
+    if (search.trim()) {
+      // Use $search parameter for keyword search across multiple fields
+      apiUrl += `&$search="${encodeURIComponent(search.trim())}"`;
     }
 
     // Only add filter if there are filter conditions
@@ -462,10 +853,10 @@ app.get('/api/email/unread', async (req, res) => {
           receivedAt: message.receivedDateTime,
           preview: message.bodyPreview?.substring(0, 200) + (message.bodyPreview?.length > 200 ? '...' : ''),
           isRead: message.isRead,
-          hasAttachments: message.hasAttachments,
-          importance: message.importance,
+          hasAttachments: message.hasAttachments || false, // Default value since field removed
+          importance: message.importance || 'normal', // Default value since field removed
           conversationId: message.conversationId,
-          webLink: message.webLink
+          webLink: message.webLink || '' // Default value since field removed
         };
 
         // Perform AI analysis
@@ -489,7 +880,32 @@ app.get('/api/email/unread', async (req, res) => {
       })
     );
 
-    console.log(`📬 Found ${emailsWithAnalysis.length} unread emails with AI analysis (page ${page})`);
+    console.log(`📬 Found ${emailsWithAnalysis.length} emails with AI analysis (page ${page})`);
+
+    // Group emails by conversation (subject/thread) - similar to Outlook
+    const groupedEmails = groupEmailsByConversation(emailsWithAnalysis);
+    console.log(`📋 Grouped into ${groupedEmails.length} conversation threads`);
+
+    // Temporarily disable conversation analysis to reduce load
+    console.log(`🚫 Conversation AI analysis temporarily disabled to reduce load`);
+    const conversationsWithAnalysis = groupedEmails.map(conversation => ({
+      ...conversation,
+      aiAnalysis: {
+        summary: `${conversation.subject} - 包含${conversation.totalEmails}封邮件的对话线程`,
+        priority: "normal",
+        category: "邮件对话",
+        action_required: conversation.unreadCount > 0,
+        sentiment: "neutral",
+        confidence: 0.5,
+        thread_summary: `这是一个关于"${conversation.subject}"的邮件对话线程，包含${conversation.totalEmails}封邮件，其中${conversation.unreadCount}封未读。`,
+        key_participants: [...new Set(conversation.emails.map(e => e.from.name))],
+        timeline_analysis: `对话从${conversation.emails[0]?.receivedAt}开始，最新邮件时间为${conversation.latestDate}`,
+        business_impact: "正常业务流程",
+        next_steps: conversation.unreadCount > 0 ? "回复未读邮件" : "持续关注"
+      }
+    }));
+
+    console.log(`📝 Generated simple analysis for ${groupedEmails.length} conversations`);
 
     // Get total count from response headers
     const totalCount = data['@odata.count'] || emailsWithAnalysis.length;
@@ -500,7 +916,9 @@ app.get('/api/email/unread', async (req, res) => {
       success: true,
       data: {
         unreadEmails: emailsWithAnalysis,
+        conversations: conversationsWithAnalysis, // Add grouped conversation view with AI analysis
         count: emailsWithAnalysis.length,
+        conversationCount: conversationsWithAnalysis.length,
         userEmail: userTokens.email,
         lastSync: new Date().toISOString(),
         aiAnalysisEnabled: true,
@@ -512,12 +930,178 @@ app.get('/api/email/unread', async (req, res) => {
           hasMore: hasMore,
           hasPrevious: page > 1
         },
-        searchQuery: search
+        searchQuery: search,
+        viewMode: 'conversation' // Indicate this supports conversation view
       }
     });
 
   } catch (error) {
     console.error('Email fetch error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch emails'
+    });
+  }
+});
+
+// Simple emails endpoint without AI analysis
+app.get('/api/emails-simple', async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const requestedPageSize = parseInt(req.query.limit) || 10;
+    const userId = 'temp-user-shelia';
+    const userTokens = tokenStore.get(userId);
+
+    if (!userTokens || userTokens.expiresAt <= new Date()) {
+      return res.status(401).json({
+        success: false,
+        error: 'Authentication required'
+      });
+    }
+
+    const pageSize = Math.min(requestedPageSize, 20);
+    const skip = (page - 1) * pageSize;
+
+    console.log(`📧 [SIMPLE] Fetching emails for: ${userTokens.email} (page: ${page}, size: ${pageSize})`);
+
+    let apiUrl = `https://graph.microsoft.com/v1.0/me/mailFolders/Inbox/messages?$orderby=receivedDateTime desc&$select=id,subject,from,receivedDateTime,bodyPreview,isRead&$top=${pageSize}&$skip=${skip}`;
+
+    const response = await fetch(apiUrl, {
+      headers: {
+        'Authorization': `Bearer ${userTokens.accessToken}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`Graph API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    // Simple data mapping without AI analysis
+    const simpleEmails = data.value.map(message => ({
+      id: message.id,
+      subject: message.subject || '(无主题)',
+      from: {
+        name: message.from?.emailAddress?.name || 'Unknown',
+        address: message.from?.emailAddress?.address || 'unknown@example.com'
+      },
+      preview: message.bodyPreview || '',
+      receivedAt: message.receivedDateTime,
+      isRead: message.isRead,
+    }));
+
+    console.log(`📬 [SIMPLE] Returned ${simpleEmails.length} emails without AI analysis`);
+
+    res.json({
+      success: true,
+      emails: simpleEmails,
+      total: simpleEmails.length,
+      page: page,
+      pageSize: pageSize,
+    });
+
+  } catch (error) {
+    console.error('Simple email fetch error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch emails'
+    });
+  }
+});
+
+// Alias for compatibility - /emails endpoint
+app.get('/api/emails', async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const requestedPageSize = parseInt(req.query.limit) || 20;
+    const userId = 'temp-user-shelia';
+    const userTokens = tokenStore.get(userId);
+
+    if (!userTokens || userTokens.expiresAt <= new Date()) {
+      return res.status(401).json({
+        success: false,
+        error: 'Authentication required'
+      });
+    }
+
+    // Microsoft Graph API limits $top to maximum 50
+    const pageSize = Math.min(requestedPageSize, 50);
+    const search = req.query.search || '';
+    const skip = (page - 1) * pageSize;
+
+    console.log(`📧 Fetching emails via /emails endpoint for: ${userTokens.email} (page: ${page}, size: ${pageSize})`);
+
+    // Build Microsoft Graph API URL
+    let apiUrl = `https://graph.microsoft.com/v1.0/me/mailFolders/Inbox/messages?$orderby=receivedDateTime desc&$select=id,subject,from,receivedDateTime,bodyPreview,isRead,conversationId&$count=true`;
+
+    // Add search parameter if provided
+    if (search.trim()) {
+      apiUrl += `&$search="${encodeURIComponent(search.trim())}"`;
+    }
+
+    // Add pagination
+    apiUrl += `&$top=${pageSize}&$skip=${skip}`;
+
+    const response = await fetch(apiUrl, {
+      headers: {
+        'Authorization': `Bearer ${userTokens.accessToken}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`📧 Graph API error: ${response.status} - ${errorText}`);
+      throw new Error(`Graph API error: ${response.status} - ${errorText}`);
+    }
+
+    const data = await response.json();
+
+    // Process emails with AI analysis (use existing cache)
+    const emailsWithAnalysis = await Promise.all(
+      data.value.map(async (message) => {
+        const emailData = {
+          id: message.id,
+          subject: message.subject,
+          from: {
+            name: message.from?.emailAddress?.name || 'Unknown',
+            address: message.from?.emailAddress?.address || 'unknown@example.com'
+          },
+          preview: message.bodyPreview,
+          receivedAt: message.receivedDateTime,
+          isRead: message.isRead,
+          conversationId: message.conversationId,
+        };
+
+        // Try to get cached analysis
+        const cacheKey = crypto.createHash('md5')
+          .update(`${message.subject}${message.bodyPreview}${message.from?.emailAddress?.address}`)
+          .digest('hex');
+
+        if (analysisCache.has(cacheKey)) {
+          emailData.aiAnalysis = analysisCache.get(cacheKey);
+          emailData.hasAiAnalysis = true;
+        } else {
+          emailData.hasAiAnalysis = false;
+        }
+
+        return emailData;
+      })
+    );
+
+    // Simple response format for compatibility
+    res.json({
+      success: true,
+      emails: emailsWithAnalysis,
+      total: data['@odata.count'] || emailsWithAnalysis.length,
+      page: page,
+      pageSize: pageSize,
+    });
+
+  } catch (error) {
+    console.error('Email fetch error via /emails:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to fetch emails'
@@ -579,6 +1163,126 @@ app.get('/api/email/analyze/:id', async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to analyze email'
+    });
+  }
+});
+
+// Enhanced conversation-aware email analysis
+app.post('/api/email/analyze-conversation', async (req, res) => {
+  try {
+    const { emailId, conversationId } = req.body;
+    const userId = 'temp-user-shelia';
+    const userTokens = tokenStore.get(userId);
+
+    if (!userTokens || userTokens.expiresAt <= new Date()) {
+      return res.status(401).json({
+        success: false,
+        error: 'Authentication required'
+      });
+    }
+
+    console.log(`🔍 Starting conversation-aware analysis for email: ${emailId} in conversation: ${conversationId}`);
+
+    // First, get the current email
+    const emailResponse = await fetch(`https://graph.microsoft.com/v1.0/me/messages/${emailId}?$select=id,subject,from,receivedDateTime,body,importance,hasAttachments,conversationId`, {
+      headers: {
+        'Authorization': `Bearer ${userTokens.accessToken}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!emailResponse.ok) {
+      throw new Error(`Failed to fetch email: ${emailResponse.status}`);
+    }
+
+    const currentEmailData = await emailResponse.json();
+
+    // Get conversation history using conversationId or subject-based grouping
+    let conversationFilter;
+    if (currentEmailData.conversationId) {
+      conversationFilter = `conversationId eq '${currentEmailData.conversationId}'`;
+    } else {
+      // Fallback to subject-based grouping
+      const normalizedSubject = currentEmailData.subject
+        .replace(/^(Re|RE|Fw|FW|Fwd|FWD):\s*/gi, '')
+        .trim();
+      conversationFilter = `contains(subject,'${normalizedSubject.replace(/'/g, "''")}')`;
+    }
+
+    console.log(`📚 Fetching conversation history with filter: ${conversationFilter}`);
+
+    // Fetch conversation history - simplified query to avoid complexity error
+    const historyResponse = await fetch(`https://graph.microsoft.com/v1.0/me/messages?$filter=${conversationFilter}&$orderby=receivedDateTime desc&$top=5&$select=id,subject,from,receivedDateTime,bodyPreview`, {
+      headers: {
+        'Authorization': `Bearer ${userTokens.accessToken}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!historyResponse.ok) {
+      console.warn(`Failed to fetch conversation history: ${historyResponse.status}`);
+    }
+
+    let conversationHistory = [];
+    if (historyResponse.ok) {
+      const historyData = await historyResponse.json();
+      conversationHistory = historyData.value
+        .filter(email => email.id !== emailId) // Exclude the current email
+        .map(email => ({
+          id: email.id,
+          subject: email.subject,
+          from: {
+            name: email.from?.emailAddress?.name || 'Unknown',
+            address: email.from?.emailAddress?.address || 'unknown@email.com'
+          },
+          receivedAt: email.receivedDateTime,
+          preview: email.bodyPreview,
+          body: email.body,
+          importance: email.importance,
+          conversationId: email.conversationId
+        }));
+    }
+
+    // Prepare current email for analysis
+    const currentEmail = {
+      id: currentEmailData.id,
+      subject: currentEmailData.subject,
+      from: {
+        name: currentEmailData.from?.emailAddress?.name || 'Unknown',
+        address: currentEmailData.from?.emailAddress?.address || 'unknown@email.com'
+      },
+      receivedAt: currentEmailData.receivedDateTime,
+      preview: currentEmailData.bodyPreview,
+      body: currentEmailData.body,
+      importance: currentEmailData.importance,
+      conversationId: currentEmailData.conversationId
+    };
+
+    console.log(`🧠 Analyzing email with ${conversationHistory.length} historical emails in conversation`);
+
+    // Perform contextual analysis
+    const analysis = await AIAnalysisService.analyzeEmailWithConversationContext(
+      currentEmail,
+      conversationHistory
+    );
+
+    res.json({
+      success: true,
+      data: {
+        emailId: emailId,
+        conversationId: conversationId || currentEmailData.conversationId,
+        analysis: analysis,
+        contextSize: conversationHistory.length,
+        analysisType: 'conversation-contextual',
+        timestamp: new Date().toISOString()
+      }
+    });
+
+  } catch (error) {
+    console.error('Conversation analysis error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to analyze email with conversation context'
     });
   }
 });

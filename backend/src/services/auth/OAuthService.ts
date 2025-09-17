@@ -6,8 +6,8 @@ import {
   OAuthTokens,
   ApiResponse 
 } from '../../types';
-import { logger } from '../../utils/logger';
-import { config } from '../../config';
+import logger from '../../utils/logger';
+import config from '../../config';
 import { EmailServiceFactory } from '../email/EmailServiceFactory';
 
 /**
@@ -426,7 +426,7 @@ export class OAuthService {
     // 使用HMAC签名确保状态参数不被篡改
     const stateString = Buffer.from(JSON.stringify(stateData)).toString('base64');
     const signature = crypto
-      .createHmac('sha256', config.JWT_SECRET)
+      .createHmac('sha256', config.env.JWT_SECRET)
       .update(stateString)
       .digest('hex');
 
@@ -442,7 +442,7 @@ export class OAuthService {
       
       // 验证签名
       const expectedSignature = crypto
-        .createHmac('sha256', config.JWT_SECRET)
+        .createHmac('sha256', config.env.JWT_SECRET)
         .update(stateString)
         .digest('hex');
 

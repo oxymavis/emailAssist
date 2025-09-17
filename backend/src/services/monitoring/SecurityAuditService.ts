@@ -681,7 +681,7 @@ export class SecurityAuditService extends EventEmitter {
    */
   private async persistEvent(type: 'auth' | 'access' | 'operation', event: any): Promise<void> {
     try {
-      const db = DatabaseManager.getInstance();
+      const db = DatabaseManager;
       
       const tableName = `security_${type}_events`;
       const eventData = JSON.stringify(event);
@@ -825,7 +825,7 @@ export class SecurityAuditService extends EventEmitter {
     
     // 持久化异常
     try {
-      const db = DatabaseManager.getInstance();
+      const db = DatabaseManager;
       await db.query(
         `INSERT INTO security_anomalies (id, type, severity, user_id, ip, description, indicators, related_events, details, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
         [

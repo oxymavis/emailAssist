@@ -1,6 +1,37 @@
 import { Request } from 'express';
 
 // Core Types and Interfaces
+export class EmailSyncError extends Error {
+  constructor(message: string, public code?: string, public details?: any) {
+    super(message);
+    this.name = 'EmailSyncError';
+  }
+}
+
+export class AuthenticationError extends Error {
+  constructor(message: string, public code?: string, public details?: any) {
+    super(message);
+    this.name = 'AuthenticationError';
+  }
+}
+
+export interface EmailAnalysisResult {
+  id: string;
+  emailId: string;
+  sentiment: EmailSentiment;
+  urgency: EmailUrgency;
+  category: string;
+  keyTopics: string[];
+  summary: string;
+  actionRequired: boolean;
+  suggestedResponse?: string;
+  confidence: number;
+  processedAt: string;
+}
+
+export type EmailSentiment = 'positive' | 'neutral' | 'negative';
+export type EmailUrgency = 'low' | 'medium' | 'high' | 'critical';
+
 export interface ApiResponse<T = any> {
   success: boolean;
   data?: T;
@@ -654,9 +685,25 @@ export interface EnvironmentConfig {
   AI_ANALYSIS_CACHE_TTL: number;
   AI_BATCH_SIZE: number;
   AI_ANALYSIS_TIMEOUT: number;
+  
+  // Redis Configuration
+  REDIS_HOST: string;
+  REDIS_PORT: string;
+  REDIS_PASSWORD: string;
+  REDIS_DB: string;
+  
+  // API Configuration
+  API_BASE_URL: string;
 }
 
 // Filter Rule Types
+export interface FilterAction {
+  id?: string;
+  type: 'mark_as_read' | 'mark_as_unread' | 'move_to_folder' | 'add_label' | 'delete' | 'forward' | 'reply' | 'archive' | 'add_tag' | 'remove_tag' | 'copy_to_folder' | 'create_task' | 'send_notification' | 'set_importance' | 'delete_message';
+  parameters: Record<string, any>;
+  value?: string | boolean | number;
+}
+
 export interface FilterRuleCondition {
   id?: string;
   field: string; // subject, sender, content, priority, receivedDate, etc.
@@ -684,6 +731,9 @@ export interface FilterRule {
   createdBy: string;
   createdAt: Date;
   updatedAt: Date;
+  stopProcessing?: boolean;
+  appliedCount?: number;
+  lastAppliedAt?: Date;
 }
 
 export interface CreateFilterRuleRequest {
@@ -829,6 +879,15 @@ export interface EmailMessage {
   isRead: boolean;
   isDraft: boolean;
   hasAttachments: boolean;
+  
+  // Additional properties for compatibility
+  from?: {
+    name: string;
+    email: string;
+  };
+  to?: Array<{ name: string; email: string }>;
+  body?: string;
+  size?: number;
   attachments: Array<{
     id: string;
     name: string;
@@ -888,6 +947,738 @@ export interface RuleEngineStats {
 export interface AuthRequest extends Request {
   user?: User;
   requestId?: string;
+}
+
+// Notification Types
+export interface NotificationChannel {
+  id: string;
+  name: string;
+  type: 'websocket' | 'email' | 'webhook' | 'sms';
+  isEnabled: boolean;
+  config: {
+    // WebSocket specific
+    socketNamespace?: string;
+    
+    // Email specific
+    smtpSettings?: {
+      host: string;
+      port: number;
+      secure: boolean;
+      auth: {
+        user: string;
+        pass: string;
+      };
+    };
+    
+    // Webhook specific
+    webhookUrl?: string;
+    webhookSecret?: string;
+    webhookHeaders?: Record<string, string>;
+    
+    // SMS specific
+    smsProvider?: 'twilio' | 'aws-sns';
+    smsConfig?: Record<string, any>;
+  };
+  retryConfig: {
+    maxAttempts: number;
+    retryDelay: number; // in seconds
+    backoffMultiplier: number;
+  };
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface NotificationTemplate {
+  id: string;
+  name: string;
+  description?: string;
+  category: 'email_alert' | 'priority_email' | 'ai_analysis' | 'system_alert' | 'custom';
+  channels: Array<{
+    channelId: string;
+    isEnabled: boolean;
+    templateContent: {
+      // For email
+      subject?: string;
+      htmlBody?: string;
+      textBody?: string;
+      
+      // For WebSocket/Push
+      title?: string;
+      message?: string;
+      icon?: string;
+      
+      // For Webhook
+      payload?: Record<string, any>;
+    };
+  }>;
+  variables: Array<{
+    name: string;
+    type: 'string' | 'number' | 'boolean' | 'date';
+    description: string;
+    required: boolean;
+    defaultValue?: any;
+  }>;
+  isSystem: boolean;
+  createdBy: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface NotificationRule {
+  id: string;
+  userId: string;
+  name: string;
+  description?: string;
+  isEnabled: boolean;
+  priority: number; // 1-10, higher = more priority
+  triggers: Array<{
+    type: 'email_analysis' | 'filter_rule' | 'time_based' | 'system_event' | 'api_trigger';
+    conditions: {
+      // For email analysis triggers
+      analysisTypes?: Array<'sentiment' | 'priority' | 'category'>;
+      sentimentThreshold?: number;
+      priorityThreshold?: number;
+      categories?: string[];
+      
+      // For filter rule triggers
+      ruleIds?: string[];
+      
+      // For time-based triggers
+      schedule?: {
+        type: 'cron' | 'interval';
+        expression: string; // cron expression or interval in ms
+        timezone?: string;
+      };
+      
+      // For system event triggers
+      eventTypes?: Array<'user_login' | 'sync_completed' | 'sync_failed' | 'quota_exceeded'>;
+      
+      // General conditions
+      additionalFilters?: {
+        senderDomains?: string[];
+        subjectKeywords?: string[];
+        timeRange?: {
+          start: string; // HH:mm
+          end: string;   // HH:mm
+        };
+        workingDaysOnly?: boolean;
+      };
+    };
+  }>;
+  actions: Array<{
+    channelId: string;
+    templateId: string;
+    isEnabled: boolean;
+    throttling?: {
+      maxPerHour?: number;
+      maxPerDay?: number;
+      cooldownMinutes?: number;
+    };
+  }>;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface NotificationPreference {
+  id: string;
+  userId: string;
+  globalSettings: {
+    isEnabled: boolean;
+    quietHours?: {
+      start: string; // HH:mm
+      end: string;   // HH:mm
+      timezone: string;
+    };
+    workingDaysOnly: boolean;
+    maxNotificationsPerHour: number;
+  };
+  channelPreferences: Array<{
+    channelId: string;
+    isEnabled: boolean;
+    priority: number;
+    settings: Record<string, any>;
+  }>;
+  categoryPreferences: Array<{
+    category: NotificationTemplate['category'];
+    isEnabled: boolean;
+    minPriority: number;
+  }>;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface Notification {
+  id: string;
+  userId: string;
+  ruleId?: string;
+  templateId: string;
+  channelId: string;
+  priority: number;
+  status: 'pending' | 'processing' | 'sent' | 'failed' | 'cancelled';
+  title: string;
+  message: string;
+  data?: Record<string, any>; // Template variables and context
+  metadata: {
+    sourceType: 'email_analysis' | 'filter_rule' | 'system_event' | 'manual';
+    sourceId?: string; // email ID, rule ID, etc.
+    triggeredBy?: string;
+    processingStartedAt?: Date;
+    processingCompletedAt?: Date;
+    retryCount: number;
+    lastRetryAt?: Date;
+  };
+  deliveryResults: Array<{
+    attempt: number;
+    attemptedAt: Date;
+    result: 'success' | 'error';
+    errorCode?: string;
+    errorMessage?: string;
+    responseData?: any;
+  }>;
+  readAt?: Date;
+  archivedAt?: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface NotificationStats {
+  totalNotifications: number;
+  sentNotifications: number;
+  failedNotifications: number;
+  pendingNotifications: number;
+  successRate: number;
+  avgDeliveryTime: number; // in milliseconds
+  notificationsByChannel: Record<string, number>;
+  notificationsByTemplate: Record<string, number>;
+  recentFailures: Array<{
+    notificationId: string;
+    errorCode: string;
+    errorMessage: string;
+    occurredAt: Date;
+  }>;
+}
+
+// Notification Service Interfaces
+export interface INotificationService {
+  // Template management
+  createTemplate(template: Omit<NotificationTemplate, 'id' | 'createdAt' | 'updatedAt'>): Promise<NotificationTemplate>;
+  updateTemplate(id: string, updates: Partial<NotificationTemplate>): Promise<NotificationTemplate>;
+  deleteTemplate(id: string): Promise<void>;
+  getTemplate(id: string): Promise<NotificationTemplate | null>;
+  getTemplates(category?: NotificationTemplate['category']): Promise<NotificationTemplate[]>;
+  
+  // Rule management
+  createRule(rule: Omit<NotificationRule, 'id' | 'createdAt' | 'updatedAt'>): Promise<NotificationRule>;
+  updateRule(id: string, updates: Partial<NotificationRule>): Promise<NotificationRule>;
+  deleteRule(id: string): Promise<void>;
+  getRule(id: string): Promise<NotificationRule | null>;
+  getUserRules(userId: string): Promise<NotificationRule[]>;
+  
+  // Channel management
+  createChannel(channel: Omit<NotificationChannel, 'id' | 'createdAt' | 'updatedAt'>): Promise<NotificationChannel>;
+  updateChannel(id: string, updates: Partial<NotificationChannel>): Promise<NotificationChannel>;
+  deleteChannel(id: string): Promise<void>;
+  getChannel(id: string): Promise<NotificationChannel | null>;
+  getChannels(): Promise<NotificationChannel[]>;
+  
+  // Preference management
+  getUserPreferences(userId: string): Promise<NotificationPreference | null>;
+  updateUserPreferences(userId: string, preferences: Partial<NotificationPreference>): Promise<NotificationPreference>;
+  
+  // Notification processing
+  triggerNotification(trigger: {
+    type: NotificationRule['triggers'][0]['type'];
+    userId: string;
+    data: Record<string, any>;
+    sourceId?: string;
+    priority?: number;
+  }): Promise<Notification[]>;
+  
+  processNotification(notificationId: string): Promise<void>;
+  retryFailedNotification(notificationId: string): Promise<void>;
+  cancelNotification(notificationId: string): Promise<void>;
+  
+  // Queue management
+  getQueueStatus(): Promise<{
+    pending: number;
+    processing: number;
+    failed: number;
+  }>;
+  
+  // Analytics
+  getNotificationStats(userId?: string, timeRange?: { start: Date; end: Date }): Promise<NotificationStats>;
+  getUserNotifications(userId: string, options?: {
+    limit?: number;
+    offset?: number;
+    status?: Notification['status'];
+    unreadOnly?: boolean;
+  }): Promise<{
+    notifications: Notification[];
+    total: number;
+  }>;
+  
+  markAsRead(notificationId: string, userId: string): Promise<void>;
+  archiveNotification(notificationId: string, userId: string): Promise<void>;
+}
+
+// WebSocket Event Types
+export interface WebSocketNotificationEvent {
+  type: 'notification' | 'notification_update' | 'notification_stats';
+  data: {
+    notification?: Notification;
+    stats?: NotificationStats;
+    userId: string;
+  };
+}
+
+// API Request/Response Types
+export interface CreateNotificationTemplateRequest {
+  name: string;
+  description?: string;
+  category: NotificationTemplate['category'];
+  channels: NotificationTemplate['channels'];
+  variables?: NotificationTemplate['variables'];
+}
+
+export interface UpdateNotificationTemplateRequest {
+  name?: string;
+  description?: string;
+  channels?: NotificationTemplate['channels'];
+  variables?: NotificationTemplate['variables'];
+}
+
+export interface CreateNotificationRuleRequest {
+  name: string;
+  description?: string;
+  priority?: number;
+  triggers: NotificationRule['triggers'];
+  actions: NotificationRule['actions'];
+}
+
+export interface UpdateNotificationRuleRequest {
+  name?: string;
+  description?: string;
+  isEnabled?: boolean;
+  priority?: number;
+  triggers?: NotificationRule['triggers'];
+  actions?: NotificationRule['actions'];
+}
+
+export interface CreateNotificationChannelRequest {
+  name: string;
+  type: NotificationChannel['type'];
+  config: NotificationChannel['config'];
+  retryConfig?: NotificationChannel['retryConfig'];
+}
+
+export interface UpdateNotificationChannelRequest {
+  name?: string;
+  isEnabled?: boolean;
+  config?: NotificationChannel['config'];
+  retryConfig?: NotificationChannel['retryConfig'];
+}
+
+export interface TriggerNotificationRequest {
+  type: NotificationRule['triggers'][0]['type'];
+  data: Record<string, any>;
+  sourceId?: string;
+  priority?: number;
+}
+
+export interface UpdateNotificationPreferencesRequest {
+  globalSettings?: NotificationPreference['globalSettings'];
+  channelPreferences?: NotificationPreference['channelPreferences'];
+  categoryPreferences?: NotificationPreference['categoryPreferences'];
+}
+
+// ===== 高级搜索和智能过滤系统类型定义 =====
+
+// 搜索查询类型
+export interface AdvancedSearchQuery {
+  // 基础查询
+  query?: string;
+  queryType?: 'fulltext' | 'semantic' | 'advanced' | 'filter';
+  
+  // 全文搜索参数
+  fulltext?: {
+    query: string;
+    language?: 'zh' | 'en' | 'auto';
+    operator?: 'and' | 'or';
+    fuzzy?: boolean;
+    highlight?: boolean;
+  };
+  
+  // 语义搜索参数
+  semantic?: {
+    query: string;
+    threshold?: number;
+    maxResults?: number;
+    includeFulltext?: boolean;
+  };
+  
+  // 高级过滤条件
+  filters?: {
+    sender?: {
+      addresses?: string[];
+      domains?: string[];
+      exclude?: string[];
+    };
+    recipients?: {
+      addresses?: string[];
+      domains?: string[];
+      includeCC?: boolean;
+      includeBCC?: boolean;
+    };
+    subject?: {
+      contains?: string[];
+      excludes?: string[];
+      exactMatch?: string;
+      regex?: string;
+    };
+    content?: {
+      contains?: string[];
+      excludes?: string[];
+      regex?: string;
+      minLength?: number;
+      maxLength?: number;
+    };
+    dates?: {
+      received?: {
+        start?: Date;
+        end?: Date;
+      };
+      sent?: {
+        start?: Date;
+        end?: Date;
+      };
+      relative?: 'today' | 'yesterday' | 'this_week' | 'last_week' | 'this_month' | 'last_month';
+    };
+    properties?: {
+      hasAttachments?: boolean;
+      attachmentTypes?: string[];
+      isRead?: boolean;
+      importance?: 'low' | 'normal' | 'high';
+      folders?: string[];
+      labels?: string[];
+      size?: {
+        min?: number;
+        max?: number;
+      };
+    };
+    analysis?: {
+      sentiment?: {
+        min?: number;
+        max?: number;
+      };
+      priority?: {
+        min?: number;
+        max?: number;
+      };
+      categories?: string[];
+      keywords?: string[];
+      confidence?: {
+        min?: number;
+      };
+    };
+  };
+  
+  // 排序和分页
+  sort?: {
+    field: 'date' | 'sender' | 'subject' | 'importance' | 'relevance' | 'sentiment' | 'priority';
+    direction: 'asc' | 'desc';
+  };
+  pagination?: {
+    page?: number;
+    limit?: number;
+    offset?: number;
+  };
+  
+  // 结果选项
+  options?: {
+    includeHighlight?: boolean;
+    includeAnalysis?: boolean;
+    includeAttachments?: boolean;
+    groupByConversation?: boolean;
+    deduplicate?: boolean;
+  };
+}
+
+// 搜索结果类型
+export interface SearchResult {
+  id: string;
+  score: number;
+  relevanceType: 'exact' | 'fuzzy' | 'semantic' | 'keyword';
+  email: EmailMessage;
+  highlights?: {
+    subject?: string[];
+    content?: string[];
+    sender?: string[];
+  };
+  explanation?: {
+    matchedTerms: string[];
+    searchType: string;
+    scoreBreakdown?: {
+      textRelevance?: number;
+      semanticSimilarity?: number;
+      recencyBoost?: number;
+      importanceBoost?: number;
+    };
+  };
+}
+
+export interface SearchResponse {
+  results: SearchResult[];
+  total: number;
+  executionTime: number;
+  searchId: string;
+  suggestions?: SearchSuggestion[];
+  facets?: SearchFacets;
+  pagination: {
+    page: number;
+    limit: number;
+    hasNext: boolean;
+    hasPrevious: boolean;
+  };
+}
+
+// 搜索建议类型
+export interface SearchSuggestion {
+  text: string;
+  type: 'query' | 'filter' | 'sender' | 'subject' | 'keyword';
+  category: string;
+  confidence: number;
+  frequency?: number;
+}
+
+// 搜索分面统计
+export interface SearchFacets {
+  senders: Array<{ value: string; count: number }>;
+  subjects: Array<{ value: string; count: number }>;
+  dates: Array<{ value: string; count: number }>;
+  attachments: Array<{ value: string; count: number }>;
+  importance: Array<{ value: string; count: number }>;
+  folders: Array<{ value: string; count: number }>;
+}
+
+// 自动完成类型
+export interface AutocompleteRequest {
+  query: string;
+  type?: 'all' | 'sender' | 'subject' | 'keyword' | 'filter';
+  limit?: number;
+  includeHistory?: boolean;
+}
+
+export interface AutocompleteResponse {
+  suggestions: Array<{
+    text: string;
+    type: string;
+    category: string;
+    relevance: number;
+    metadata?: {
+      count?: number;
+      lastUsed?: Date;
+      isPopular?: boolean;
+    };
+  }>;
+  executionTime: number;
+}
+
+// 搜索历史类型
+export interface SearchHistory {
+  id: string;
+  userId: string;
+  queryText: string;
+  queryType: 'fulltext' | 'semantic' | 'advanced' | 'filter';
+  searchFilters: AdvancedSearchQuery['filters'];
+  resultsCount: number;
+  executionTime: number;
+  clickedResults: string[];
+  searchSessionId?: string;
+  createdAt: Date;
+}
+
+export interface SearchSession {
+  id: string;
+  userId: string;
+  sessionStart: Date;
+  sessionEnd?: Date;
+  totalSearches: number;
+  uniqueQueries: number;
+  mostSearchedTerms: string[];
+}
+
+// 搜索过滤器预设
+export interface SearchFilterPreset {
+  id: string;
+  userId: string;
+  name: string;
+  description?: string;
+  filterConfig: AdvancedSearchQuery;
+  isPublic: boolean;
+  usageCount: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+// 搜索分析统计
+export interface SearchAnalytics {
+  totalQueries: number;
+  queryTypes: Record<string, number>;
+  avgExecutionTime: number;
+  slowQueries: number;
+  noResultQueries: number;
+  popularTerms: Array<{ term: string; count: number }>;
+  userActivity: {
+    activeUsers: number;
+    avgQueriesPerUser: number;
+  };
+  performance: {
+    p50ExecutionTime: number;
+    p95ExecutionTime: number;
+    p99ExecutionTime: number;
+  };
+  timeRange: {
+    start: Date;
+    end: Date;
+  };
+}
+
+// 语义搜索相关类型
+export interface EmbeddingVector {
+  id: string;
+  messageId: string;
+  vector: number[];
+  model: string;
+  createdAt: Date;
+}
+
+export interface SemanticSearchRequest {
+  query: string;
+  threshold?: number;
+  maxResults?: number;
+  includeMetadata?: boolean;
+  filters?: AdvancedSearchQuery['filters'];
+}
+
+export interface SemanticSearchResult {
+  messageId: string;
+  similarity: number;
+  embedding?: EmbeddingVector;
+  message?: EmailMessage;
+}
+
+// 搜索索引管理
+export interface SearchIndex {
+  name: string;
+  type: 'fulltext' | 'trigram' | 'vector';
+  table: string;
+  columns: string[];
+  configuration?: string;
+  isActive: boolean;
+  lastUpdated: Date;
+  documentCount: number;
+  size: string;
+}
+
+export interface IndexRebuildStatus {
+  indexName: string;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  progress: number;
+  startTime: Date;
+  endTime?: Date;
+  errorMessage?: string;
+  processedDocuments: number;
+  totalDocuments: number;
+}
+
+// 搜索服务接口
+export interface IAdvancedSearchService {
+  // 全文搜索
+  fulltextSearch(query: AdvancedSearchQuery, userId: string): Promise<SearchResponse>;
+  
+  // 语义搜索
+  semanticSearch(query: SemanticSearchRequest, userId: string): Promise<SearchResponse>;
+  
+  // 高级搜索（组合多种搜索方式）
+  advancedSearch(query: AdvancedSearchQuery, userId: string): Promise<SearchResponse>;
+  
+  // 搜索建议
+  getSuggestions(query: string, userId: string): Promise<SearchSuggestion[]>;
+  
+  // 自动完成
+  autocomplete(request: AutocompleteRequest, userId: string): Promise<AutocompleteResponse>;
+  
+  // 搜索历史
+  getSearchHistory(userId: string, limit?: number): Promise<SearchHistory[]>;
+  saveSearchHistory(history: Omit<SearchHistory, 'id' | 'createdAt'>): Promise<void>;
+  
+  // 过滤器预设
+  getFilterPresets(userId: string): Promise<SearchFilterPreset[]>;
+  saveFilterPreset(preset: Omit<SearchFilterPreset, 'id' | 'createdAt' | 'updatedAt'>): Promise<SearchFilterPreset>;
+  deleteFilterPreset(presetId: string, userId: string): Promise<void>;
+  
+  // 搜索分析
+  getSearchAnalytics(userId?: string, timeRange?: { start: Date; end: Date }): Promise<SearchAnalytics>;
+  
+  // 索引管理
+  getIndexStatus(): Promise<SearchIndex[]>;
+  rebuildIndex(indexName: string): Promise<IndexRebuildStatus>;
+}
+
+// 语义搜索服务接口
+export interface ISemanticSearchService {
+  // 向量化文本
+  embedText(text: string): Promise<number[]>;
+  
+  // 批量向量化
+  embedTexts(texts: string[]): Promise<number[][]>;
+  
+  // 计算向量相似度
+  calculateSimilarity(vector1: number[], vector2: number[]): number;
+  
+  // 语义搜索
+  search(queryVector: number[], filters?: AdvancedSearchQuery['filters'], limit?: number): Promise<SemanticSearchResult[]>;
+  
+  // 更新邮件向量
+  updateMessageEmbedding(messageId: string, content: string): Promise<void>;
+  
+  // 批量更新向量
+  batchUpdateEmbeddings(messages: Array<{ id: string; content: string }>): Promise<void>;
+  
+  // 删除向量
+  deleteMessageEmbedding(messageId: string): Promise<void>;
+}
+
+// API请求响应类型
+export interface SearchRequest {
+  query: AdvancedSearchQuery;
+  sessionId?: string;
+}
+
+export interface AutocompleteRequest {
+  query: string;
+  type?: 'all' | 'sender' | 'subject' | 'keyword' | 'filter';
+  limit?: number;
+}
+
+export interface SaveFilterPresetRequest {
+  name: string;
+  description?: string;
+  filterConfig: AdvancedSearchQuery;
+  isPublic?: boolean;
+}
+
+export interface UpdateFilterPresetRequest {
+  name?: string;
+  description?: string;
+  filterConfig?: AdvancedSearchQuery;
+  isPublic?: boolean;
+}
+
+// 搜索错误类型
+export interface SearchError extends Error {
+  code: 'INVALID_QUERY' | 'SEARCH_TIMEOUT' | 'INDEX_ERROR' | 'SEMANTIC_ERROR' | 'PERMISSION_DENIED';
+  details?: any;
 }
 
 declare global {

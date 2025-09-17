@@ -194,4 +194,267 @@ export class MicrosoftGraphEmailService {
         importance: message.importance || 'normal',
         conversationId: message.conversationId,
         webLink: message.webLink
-      }));\n\n      const tokens = await MicrosoftAuthToken.findByUserId(userId);\n      const userEmail = tokens?.email || 'unknown@email.com';\n\n      return {\n        emails,\n        total: emails.length,\n        userEmail\n      };\n\n    } catch (error) {\n      logger.error('Failed to get emails', {\n        userId,\n        options,\n        error: error instanceof Error ? error.message : 'Unknown error'\n      });\n      throw error;\n    }\n  }\n\n  /**\n   * Get a single email by ID\n   */\n  async getEmailById(userId: string, messageId: string): Promise<any> {\n    try {\n      const accessToken = await this.getValidAccessToken(userId);\n      if (!accessToken) {\n        throw new Error('No valid Microsoft access token available');\n      }\n\n      this.httpClient.defaults.headers.Authorization = `Bearer ${accessToken}`;\n\n      const response = await this.httpClient.get(`/me/messages/${messageId}`);\n      const message = response.data;\n\n      return {\n        id: message.id,\n        subject: message.subject || '(No Subject)',\n        from: {\n          name: message.from?.emailAddress?.name || '',\n          address: message.from?.emailAddress?.address || ''\n        },\n        recipients: {\n          to: message.toRecipients?.map((r: any) => ({\n            name: r.emailAddress.name,\n            address: r.emailAddress.address\n          })) || [],\n          cc: message.ccRecipients?.map((r: any) => ({\n            name: r.emailAddress.name,\n            address: r.emailAddress.address\n          })) || []\n        },\n        content: {\n          text: message.body?.contentType === 'text' ? message.body.content : undefined,\n          html: message.body?.contentType === 'html' ? message.body.content : undefined,\n          snippet: message.bodyPreview\n        },\n        receivedAt: message.receivedDateTime,\n        sentAt: message.sentDateTime,\n        isRead: message.isRead,\n        hasAttachments: message.hasAttachments,\n        importance: message.importance,\n        conversationId: message.conversationId,\n        webLink: message.webLink\n      };\n\n    } catch (error) {\n      logger.error('Failed to get email by ID', {\n        userId,\n        messageId,\n        error: error instanceof Error ? error.message : 'Unknown error'\n      });\n      throw error;\n    }\n  }\n\n  /**\n   * Mark email as read or unread\n   */\n  async markEmailAsRead(userId: string, messageId: string, isRead: boolean = true): Promise<void> {\n    try {\n      const accessToken = await this.getValidAccessToken(userId);\n      if (!accessToken) {\n        throw new Error('No valid Microsoft access token available');\n      }\n\n      this.httpClient.defaults.headers.Authorization = `Bearer ${accessToken}`;\n\n      await this.httpClient.patch(`/me/messages/${messageId}`, {\n        isRead: Boolean(isRead)\n      });\n\n      logger.info('Email read status updated', {\n        userId,\n        messageId,\n        isRead: Boolean(isRead)\n      });\n\n    } catch (error) {\n      logger.error('Failed to update email read status', {\n        userId,\n        messageId,\n        isRead,\n        error: error instanceof Error ? error.message : 'Unknown error'\n      });\n      throw error;\n    }\n  }\n\n  /**\n   * Get user's Microsoft account info\n   */\n  async getUserInfo(userId: string): Promise<{ email: string; name: string }> {\n    try {\n      const accessToken = await this.getValidAccessToken(userId);\n      if (!accessToken) {\n        throw new Error('No valid Microsoft access token available');\n      }\n\n      this.httpClient.defaults.headers.Authorization = `Bearer ${accessToken}`;\n\n      const response = await this.httpClient.get('/me');\n      const userInfo = response.data;\n\n      return {\n        email: userInfo.mail || userInfo.userPrincipalName,\n        name: userInfo.displayName || 'Unknown User'\n      };\n\n    } catch (error) {\n      logger.error('Failed to get user info', {\n        userId,\n        error: error instanceof Error ? error.message : 'Unknown error'\n      });\n      throw error;\n    }\n  }\n\n  /**\n   * Check if user has valid Microsoft connection\n   */\n  async hasValidConnection(userId: string): Promise<boolean> {\n    try {\n      const tokens = await MicrosoftAuthToken.findByUserId(userId);\n      if (!tokens || !tokens.refreshToken) {\n        return false;\n      }\n\n      // Try to get a valid access token\n      const accessToken = await this.getValidAccessToken(userId);\n      return !!accessToken;\n\n    } catch (error) {\n      logger.error('Failed to check Microsoft connection', {\n        userId,\n        error: error instanceof Error ? error.message : 'Unknown error'\n      });\n      return false;\n    }\n  }\n\n  /**\n   * Get valid access token for user (refresh if needed)\n   */\n  private async getValidAccessToken(userId: string): Promise<string | null> {\n    try {\n      const tokens = await MicrosoftAuthToken.findByUserId(userId);\n      \n      if (!tokens) {\n        logger.warn('No Microsoft tokens found for user', { userId });\n        return null;\n      }\n\n      // Check if token is still valid (with 5 minute buffer)\n      const now = new Date();\n      const bufferTime = 5 * 60 * 1000; // 5 minutes in milliseconds\n      \n      if (tokens.expiresAt.getTime() - now.getTime() > bufferTime) {\n        return tokens.accessToken;\n      }\n\n      // Token is expired or about to expire, need to refresh\n      if (!tokens.refreshToken) {\n        logger.warn('No refresh token available for user', { userId });\n        return null;\n      }\n\n      // Refresh the token\n      const newTokens = await this.refreshAccessToken(tokens.refreshToken);\n      \n      // Update tokens in database\n      await MicrosoftAuthToken.updateTokens(\n        userId,\n        newTokens.accessToken,\n        newTokens.refreshToken,\n        newTokens.expiresIn\n      );\n\n      logger.info('Microsoft access token refreshed successfully', { userId });\n      \n      return newTokens.accessToken;\n\n    } catch (error) {\n      logger.error('Failed to get valid access token', {\n        userId,\n        error: error instanceof Error ? error.message : 'Unknown error'\n      });\n      return null;\n    }\n  }\n\n  /**\n   * Refresh Microsoft access token\n   */\n  private async refreshAccessToken(refreshToken: string): Promise<{\n    accessToken: string;\n    refreshToken?: string;\n    expiresIn: number;\n  }> {\n    const tokenUrl = `https://login.microsoftonline.com/${process.env.MICROSOFT_TENANT_ID}/oauth2/v2.0/token`;\n    \n    const params = new URLSearchParams({\n      client_id: process.env.MICROSOFT_CLIENT_ID!,\n      client_secret: process.env.MICROSOFT_CLIENT_SECRET!,\n      refresh_token: refreshToken,\n      grant_type: 'refresh_token',\n      scope: process.env.MICROSOFT_GRAPH_SCOPE || 'https://graph.microsoft.com/Mail.Read https://graph.microsoft.com/User.Read'\n    });\n\n    const response = await axios.post(tokenUrl, params.toString(), {\n      headers: {\n        'Content-Type': 'application/x-www-form-urlencoded'\n      },\n      timeout: 30000\n    });\n\n    if (!response.data.access_token) {\n      throw new Error('No access token in refresh response');\n    }\n\n    return {\n      accessToken: response.data.access_token,\n      refreshToken: response.data.refresh_token,\n      expiresIn: response.data.expires_in || 3600\n    };\n  }\n\n  /**\n   * Truncate email preview text\n   */\n  private truncatePreview(text: string | undefined, maxLength: number = 200): string {\n    if (!text) return '';\n    \n    if (text.length <= maxLength) {\n      return text;\n    }\n    \n    return text.substring(0, maxLength).trim() + '...';\n  }\n}\n\n// Export singleton instance\nexport const microsoftGraphEmailService = new MicrosoftGraphEmailService();
+      }));
+
+      const tokens = await MicrosoftAuthToken.findByUserId(userId);
+      const userEmail = tokens?.email || 'unknown@email.com';
+
+      return {
+        emails,
+        total: emails.length,
+        userEmail
+      };
+
+    } catch (error) {
+      logger.error('Failed to get emails', {
+        userId,
+        options,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Get a single email by ID
+   */
+  async getEmailById(userId: string, messageId: string): Promise<any> {
+    try {
+      const accessToken = await this.getValidAccessToken(userId);
+      if (!accessToken) {
+        throw new Error('No valid Microsoft access token available');
+      }
+
+      this.httpClient.defaults.headers.Authorization = `Bearer ${accessToken}`;
+
+      const response = await this.httpClient.get(`/me/messages/${messageId}`);
+      const message = response.data;
+
+      return {
+        id: message.id,
+        subject: message.subject || '(No Subject)',
+        from: {
+          name: message.from?.emailAddress?.name || '',
+          address: message.from?.emailAddress?.address || ''
+        },
+        recipients: {
+          to: message.toRecipients?.map((r: any) => ({
+            name: r.emailAddress.name,
+            address: r.emailAddress.address
+          })) || [],
+          cc: message.ccRecipients?.map((r: any) => ({
+            name: r.emailAddress.name,
+            address: r.emailAddress.address
+          })) || []
+        },
+        content: {
+          text: message.body?.contentType === 'text' ? message.body.content : undefined,
+          html: message.body?.contentType === 'html' ? message.body.content : undefined,
+          snippet: message.bodyPreview
+        },
+        receivedAt: message.receivedDateTime,
+        sentAt: message.sentDateTime,
+        isRead: message.isRead,
+        hasAttachments: message.hasAttachments,
+        importance: message.importance,
+        conversationId: message.conversationId,
+        webLink: message.webLink
+      };
+
+    } catch (error) {
+      logger.error('Failed to get email by ID', {
+        userId,
+        messageId,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Mark email as read or unread
+   */
+  async markEmailAsRead(userId: string, messageId: string, isRead: boolean = true): Promise<void> {
+    try {
+      const accessToken = await this.getValidAccessToken(userId);
+      if (!accessToken) {
+        throw new Error('No valid Microsoft access token available');
+      }
+
+      this.httpClient.defaults.headers.Authorization = `Bearer ${accessToken}`;
+
+      await this.httpClient.patch(`/me/messages/${messageId}`, {
+        isRead: Boolean(isRead)
+      });
+
+      logger.info('Email read status updated', {
+        userId,
+        messageId,
+        isRead: Boolean(isRead)
+      });
+
+    } catch (error) {
+      logger.error('Failed to update email read status', {
+        userId,
+        messageId,
+        isRead,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Get user's Microsoft account info
+   */
+  async getUserInfo(userId: string): Promise<{ email: string; name: string }> {
+    try {
+      const accessToken = await this.getValidAccessToken(userId);
+      if (!accessToken) {
+        throw new Error('No valid Microsoft access token available');
+      }
+
+      this.httpClient.defaults.headers.Authorization = `Bearer ${accessToken}`;
+
+      const response = await this.httpClient.get('/me');
+      const userInfo = response.data;
+
+      return {
+        email: userInfo.mail || userInfo.userPrincipalName,
+        name: userInfo.displayName || 'Unknown User'
+      };
+
+    } catch (error) {
+      logger.error('Failed to get user info', {
+        userId,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Check if user has valid Microsoft connection
+   */
+  async hasValidConnection(userId: string): Promise<boolean> {
+    try {
+      const tokens = await MicrosoftAuthToken.findByUserId(userId);
+      if (!tokens || !tokens.refreshToken) {
+        return false;
+      }
+
+      // Try to get a valid access token
+      const accessToken = await this.getValidAccessToken(userId);
+      return !!accessToken;
+
+    } catch (error) {
+      logger.error('Failed to check Microsoft connection', {
+        userId,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+      return false;
+    }
+  }
+
+  /**
+   * Get valid access token for user (refresh if needed)
+   */
+  private async getValidAccessToken(userId: string): Promise<string | null> {
+    try {
+      const tokens = await MicrosoftAuthToken.findByUserId(userId);
+
+      if (!tokens) {
+        logger.warn('No Microsoft tokens found for user', { userId });
+        return null;
+      }
+
+      // Check if token is still valid (with 5 minute buffer)
+      const now = new Date();
+      const bufferTime = 5 * 60 * 1000; // 5 minutes in milliseconds
+
+      if (tokens.expiresAt.getTime() - now.getTime() > bufferTime) {
+        return tokens.accessToken;
+      }
+
+      // Token is expired or about to expire, need to refresh
+      if (!tokens.refreshToken) {
+        logger.warn('No refresh token available for user', { userId });
+        return null;
+      }
+
+      // Refresh the token
+      const newTokens = await this.refreshAccessToken(tokens.refreshToken);
+
+      // Update tokens in database
+      await MicrosoftAuthToken.updateTokens(
+        userId,
+        newTokens.accessToken,
+        newTokens.refreshToken,
+        newTokens.expiresIn
+      );
+
+      logger.info('Microsoft access token refreshed successfully', { userId });
+
+      return newTokens.accessToken;
+
+    } catch (error) {
+      logger.error('Failed to get valid access token', {
+        userId,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Refresh Microsoft access token
+   */
+  private async refreshAccessToken(refreshToken: string): Promise<{
+    accessToken: string;
+    refreshToken?: string;
+    expiresIn: number;
+  }> {
+    const tokenUrl = `https://login.microsoftonline.com/${process.env.MICROSOFT_TENANT_ID}/oauth2/v2.0/token`;
+
+    const params = new URLSearchParams({
+      client_id: process.env.MICROSOFT_CLIENT_ID!,
+      client_secret: process.env.MICROSOFT_CLIENT_SECRET!,
+      refresh_token: refreshToken,
+      grant_type: 'refresh_token',
+      scope: process.env.MICROSOFT_GRAPH_SCOPE || 'https://graph.microsoft.com/Mail.Read https://graph.microsoft.com/User.Read'
+    });
+
+    const response = await axios.post(tokenUrl, params.toString(), {
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      timeout: 30000
+    });
+
+    if (!response.data.access_token) {
+      throw new Error('No access token in refresh response');
+    }
+
+    return {
+      accessToken: response.data.access_token,
+      refreshToken: response.data.refresh_token,
+      expiresIn: response.data.expires_in || 3600
+    };
+  }
+
+  /**
+   * Truncate email preview text
+   */
+  private truncatePreview(text: string | undefined, maxLength: number = 200): string {
+    if (!text) return '';
+
+    if (text.length <= maxLength) {
+      return text;
+    }
+
+    return text.substring(0, maxLength).trim() + '...';
+  }
+}
+
+// Export singleton instance
+export const microsoftGraphEmailService = new MicrosoftGraphEmailService();

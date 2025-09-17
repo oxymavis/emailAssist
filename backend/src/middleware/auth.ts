@@ -292,3 +292,4 @@ export const addRequestContext = (
 // Export aliases for compatibility
 export { authenticate as requireAuth };
 export { authenticate as authenticateToken };
+export { authenticate as authMiddleware };

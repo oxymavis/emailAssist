@@ -114,6 +114,16 @@ interface AIAnalysis {
   confidence: number;
   analyzedAt: string;
   model?: string;
+  analysisType?: string;
+  contextSize?: number;
+  conversationContext?: {
+    isResponse: boolean;
+    responseToWhom: string;
+    conversationStage: 'initial' | 'ongoing' | 'conclusion' | 'followup';
+    relationshipContext: string;
+    historicalSentiment: string;
+    escalationLevel: string;
+  };
 }
 
 interface EnhancedEmail {
@@ -132,6 +142,17 @@ interface EnhancedEmail {
   webLink?: string;
   aiAnalysis?: AIAnalysis;
   hasAiAnalysis?: boolean;
+}
+
+interface EmailConversation {
+  conversationId: string;
+  subject: string;
+  emails: EnhancedEmail[];
+  latestDate: string;
+  totalEmails: number;
+  unreadCount: number;
+  hasAiAnalysis: boolean;
+  aiAnalysis?: AIAnalysis; // Conversation-level AI analysis
 }
 
 interface AuthStatus {
@@ -189,11 +210,14 @@ const aiOutlookService = {
   // 获取带AI分析的邮件 (支持分页和搜索)
   async getUnreadEmails(page: number = 1, pageSize: number = 20, search: string = ''): Promise<{
     unreadEmails: EnhancedEmail[],
+    conversations: EmailConversation[],
     count: number,
+    conversationCount: number,
     userEmail: string,
     lastSync: string,
     aiAnalysisEnabled: boolean,
-    pagination: PaginationInfo
+    pagination: PaginationInfo,
+    viewMode: string
   }> {
     try {
       const params = new URLSearchParams({
@@ -210,7 +234,14 @@ const aiOutlookService = {
         throw new Error('Failed to fetch emails');
       }
       const result = await response.json();
-      return result.data;
+      // 返回包含对话分组的数据结构
+      return {
+        conversations: result.data.conversations || [],
+        unreadEmails: result.data.unreadEmails || [],
+        count: result.data.count || 0,
+        userEmail: result.data.userEmail,
+        lastSync: result.data.lastSync
+      };
     } catch (error) {
       console.error('Email fetch failed:', error);
       throw error;
@@ -226,6 +257,28 @@ const aiOutlookService = {
       return result.data.analysis;
     } catch (error) {
       console.error('Email analysis failed:', error);
+      throw error;
+    }
+  },
+
+  // 获取对话级别的增强分析
+  async getConversationAnalysis(emailId: string, conversationId: string): Promise<AIAnalysis> {
+    try {
+      const response = await fetch(`${API_BASE_URL}/email/analyze-conversation`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          emailId,
+          conversationId
+        })
+      });
+      if (!response.ok) throw new Error('Failed to get conversation analysis');
+      const result = await response.json();
+      return result.data.analysis;
+    } catch (error) {
+      console.error('Conversation analysis failed:', error);
       throw error;
     }
   },
@@ -361,9 +414,241 @@ const AIAnalysisDisplay: React.FC<{ analysis: AIAnalysis }> = ({ analysis }) => 
         <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
           分析时间: {new Date(analysis.analyzedAt).toLocaleString()}
           {analysis.model && ` • 模型: ${analysis.model}`}
+          {analysis.analysisType === 'contextual' && analysis.contextSize && (
+            ` • 对话分析: ${analysis.contextSize} 封历史邮件`
+          )}
         </Typography>
+
+        {/* 显示对话上下文信息 */}
+        {analysis.conversationContext && (
+          <Box sx={{ mt: 2, p: 1, bgcolor: 'rgba(25, 118, 210, 0.08)', borderRadius: 1 }}>
+            <Typography variant="body2" color="primary" gutterBottom>
+              🗣️ 对话上下文分析:
+            </Typography>
+            <Grid container spacing={1}>
+              {analysis.conversationContext.isResponse && (
+                <Grid item xs={6}>
+                  <Typography variant="caption" color="text.secondary">
+                    回复给: {analysis.conversationContext.responseToWhom}
+                  </Typography>
+                </Grid>
+              )}
+              <Grid item xs={6}>
+                <Typography variant="caption" color="text.secondary">
+                  对话阶段: {analysis.conversationContext.conversationStage}
+                </Typography>
+              </Grid>
+              <Grid item xs={6}>
+                <Typography variant="caption" color="text.secondary">
+                  关系背景: {analysis.conversationContext.relationshipContext}
+                </Typography>
+              </Grid>
+              <Grid item xs={6}>
+                <Typography variant="caption" color="text.secondary">
+                  历史情感: {analysis.conversationContext.historicalSentiment}
+                </Typography>
+              </Grid>
+            </Grid>
+          </Box>
+        )}
       </CardContent>
     </Card>
+  );
+};
+
+// 对话分组显示组件
+const ConversationListItem: React.FC<{
+  conversation: EmailConversation,
+  onAnalyze?: (id: string) => void,
+  onAnalyzeConversation?: (emailId: string, conversationId: string) => void,
+  onExpandConversation?: (conversationId: string) => void
+}> = ({ conversation, onAnalyze, onAnalyzeConversation, onExpandConversation }) => {
+  const [expanded, setExpanded] = useState(false);
+
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffInHours = Math.abs(now.getTime() - date.getTime()) / (1000 * 60 * 60);
+
+    if (diffInHours < 24) {
+      return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+    } else if (diffInHours < 48) {
+      return '昨天 ' + date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+    } else {
+      return date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' });
+    }
+  };
+
+  const latestEmail = conversation.emails[0]; // 最新的邮件
+  const hasHighUrgency = conversation.emails.some(email =>
+    email.aiAnalysis?.urgency === 'critical' || email.aiAnalysis?.urgency === 'high'
+  );
+
+  return (
+    <Accordion
+      expanded={expanded}
+      onChange={() => setExpanded(!expanded)}
+      sx={{
+        mb: 1,
+        boxShadow: 1,
+        '&:before': { display: 'none' },
+        border: hasHighUrgency ? '2px solid' : '1px solid',
+        borderColor: hasHighUrgency ? 'warning.main' : 'divider'
+      }}
+    >
+      <AccordionSummary expandIcon={<ExpandMore />}>
+        <Box sx={{ width: '100%' }}>
+          <Grid container alignItems="center" spacing={1}>
+            <Grid item xs={12} sm={8}>
+              <Box display="flex" alignItems="center">
+                <Avatar sx={{ width: 32, height: 32, mr: 1, fontSize: '0.75rem' }}>
+                  {latestEmail.from.name.charAt(0).toUpperCase()}
+                </Avatar>
+                <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+                  <Typography
+                    variant="subtitle2"
+                    noWrap
+                    sx={{ fontWeight: conversation.unreadCount > 0 ? 'bold' : 'normal' }}
+                  >
+                    {conversation.subject}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary" noWrap>
+                    {latestEmail.from.name} • {conversation.totalEmails} 封邮件
+                    {conversation.unreadCount > 0 && (
+                      <Chip
+                        label={`${conversation.unreadCount} 未读`}
+                        size="small"
+                        color="primary"
+                        sx={{ ml: 1, height: 16, fontSize: '0.7rem' }}
+                      />
+                    )}
+                  </Typography>
+                </Box>
+              </Box>
+            </Grid>
+
+            <Grid item xs={12} sm={4}>
+              <Box textAlign="right">
+                <Box display="flex" alignItems="center" justifyContent="flex-end" mb={0.5}>
+                  {hasHighUrgency && (
+                    <Tooltip title="包含高优先级邮件">
+                      <span style={{ marginRight: 4 }}>⚡</span>
+                    </Tooltip>
+                  )}
+                  {conversation.hasAiAnalysis && (
+                    <Tooltip title="包含AI分析">
+                      <SmartToy color="primary" sx={{ mr: 0.5, fontSize: 16 }} />
+                    </Tooltip>
+                  )}
+                  <Typography variant="caption" color="text.secondary">
+                    {formatDate(conversation.latestDate)}
+                  </Typography>
+                </Box>
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                  {latestEmail.preview}
+                </Typography>
+              </Box>
+            </Grid>
+          </Grid>
+        </Box>
+      </AccordionSummary>
+
+      <AccordionDetails sx={{ pt: 0 }}>
+        <Divider sx={{ mb: 2 }} />
+
+        {/* Conversation-level AI Analysis */}
+        {conversation.aiAnalysis && (
+          <Card sx={{ mb: 2, bgcolor: 'primary.50', border: '1px solid', borderColor: 'primary.200' }}>
+            <CardContent>
+              <Box display="flex" alignItems="center" gap={1} mb={1}>
+                <SmartToy color="primary" />
+                <Typography variant="subtitle2" color="primary.main">
+                  🤖 对话整体分析报告
+                </Typography>
+              </Box>
+              <AIAnalysisDisplay analysis={conversation.aiAnalysis} />
+            </CardContent>
+          </Card>
+        )}
+
+        <Typography variant="subtitle2" gutterBottom>
+          📧 对话中的邮件 ({conversation.totalEmails} 封)
+        </Typography>
+
+        {conversation.emails.map((email, index) => (
+          <Card key={email.id} sx={{ mb: 1, ml: index > 0 ? 2 : 0 }}>
+            <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+              <Box display="flex" justifyContent="space-between" alignItems="start" mb={1}>
+                <Box>
+                  <Typography variant="body2" fontWeight={email.isRead ? 'normal' : 'bold'}>
+                    {email.from.name}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {formatDate(email.receivedAt)}
+                  </Typography>
+                </Box>
+                <Box display="flex" alignItems="center" gap={0.5}>
+                  {email.aiAnalysis && (
+                    <Chip
+                      label={email.aiAnalysis.urgency}
+                      size="small"
+                      color={email.aiAnalysis.urgency === 'critical' || email.aiAnalysis.urgency === 'high' ? 'error' : 'default'}
+                    />
+                  )}
+                  {!email.isRead && (
+                    <Chip label="未读" size="small" color="primary" />
+                  )}
+                </Box>
+              </Box>
+
+              <Typography variant="body2" sx={{ mb: 1 }}>
+                {email.preview}
+              </Typography>
+
+              {email.hasAiAnalysis && email.aiAnalysis && (
+                <AIAnalysisDisplay analysis={email.aiAnalysis} />
+              )}
+
+              {!email.hasAiAnalysis && onAnalyze && (
+                <Box sx={{ mt: 1, display: 'flex', gap: 1 }}>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    startIcon={<SmartToy />}
+                    onClick={() => onAnalyze(email.id)}
+                  >
+                    单独分析
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="contained"
+                    startIcon={<SmartToy />}
+                    onClick={() => {
+                      if (onAnalyzeConversation) {
+                        onAnalyzeConversation(email.id, conversation.conversationId);
+                      }
+                    }}
+                    color="primary"
+                  >
+                    对话分析
+                  </Button>
+                </Box>
+              )}
+            </CardContent>
+          </Card>
+        ))}
+
+        <Box mt={2} display="flex" gap={1} justifyContent="center">
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={() => onExpandConversation && onExpandConversation(conversation.conversationId)}
+          >
+            在Outlook中查看完整对话
+          </Button>
+        </Box>
+      </AccordionDetails>
+    </Accordion>
   );
 };
 
@@ -529,6 +814,8 @@ const EmailAssistAI: React.FC = () => {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [authStatus, setAuthStatus] = useState<AuthStatus>({ isConnected: false });
   const [emails, setEmails] = useState<EnhancedEmail[]>([]);
+  const [conversations, setConversations] = useState<EmailConversation[]>([]);
+  const [viewMode, setViewMode] = useState<'emails' | 'conversations'>('conversations');
   const [stats, setStats] = useState<DashboardStats>({
     totalEmails: 0,
     unreadEmails: 0,
@@ -580,10 +867,18 @@ const EmailAssistAI: React.FC = () => {
           aiOutlookService.getDashboardStats()
         ]);
 
+        console.log('📧 收到的数据:', emailData);
         setEmails(emailData.unreadEmails);
+        setConversations(emailData.conversations || []);
+        console.log('💬 设置的对话数据:', emailData.conversations || []);
         setStats(statsData);
         if (emailData.pagination) {
           setPagination(emailData.pagination);
+        }
+
+        // 如果收到了对话数据，默认使用对话模式
+        if (emailData.conversations && emailData.conversations.length > 0) {
+          setViewMode('conversations');
         }
 
         console.log(`✅ 获取到 ${emailData.unreadEmails.length} 封邮件，总计: ${emailData.pagination?.totalCount || 0}，AI分析: ${statsData.aiAnalysisEnabled ? '已启用' : '未启用'}`);
@@ -674,6 +969,48 @@ const EmailAssistAI: React.FC = () => {
     }
   };
 
+  // 启动对话级别的增强分析
+  const handleAnalyzeConversation = async (emailId: string, conversationId: string) => {
+    try {
+      setLoading(true);
+      console.log(`🔍 启动对话分析 - 邮件ID: ${emailId}, 对话ID: ${conversationId}`);
+
+      const analysis = await aiOutlookService.getConversationAnalysis(emailId, conversationId);
+
+      // 更新邮件列表中的分析结果
+      setEmails(prevEmails =>
+        prevEmails.map(email =>
+          email.id === emailId
+            ? { ...email, aiAnalysis: analysis, hasAiAnalysis: true }
+            : email
+        )
+      );
+
+      // 同时更新对话列表中对应的邮件
+      setConversations(prevConversations =>
+        prevConversations.map(conversation => ({
+          ...conversation,
+          emails: conversation.emails.map(email =>
+            email.id === emailId
+              ? { ...email, aiAnalysis: analysis, hasAiAnalysis: true }
+              : email
+          ),
+          hasAiAnalysis: conversation.emails.some(email =>
+            email.id === emailId ? true : email.hasAiAnalysis
+          )
+        }))
+      );
+
+      console.log(`✅ 对话分析完成，分析类型: ${analysis.analysisType || 'contextual'}`);
+
+    } catch (error: any) {
+      console.error('对话分析失败:', error);
+      setError(`对话分析失败: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // 处理分页变化
   const handlePageChange = (event: React.ChangeEvent<unknown>, page: number) => {
     fetchData(page, pagination.pageSize, searchQuery);
@@ -709,14 +1046,19 @@ const EmailAssistAI: React.FC = () => {
   // 页面初始化
   useEffect(() => {
     fetchData();
+  }, []);
 
-    // 设置定时刷新
+  // 设置定时刷新 - 独立的effect避免依赖导致的重复设置
+  useEffect(() => {
+    if (!authStatus.isConnected) return;
+
     const interval = setInterval(() => {
-      fetchData(pagination.currentPage, pagination.pageSize, searchQuery);
-    }, 30000); // 30秒刷新一次
+      // 只刷新当前显示的数据，不自动翻页
+      fetchData(1, 20, ''); // 固定使用第1页，20条数据，无搜索条件进行后台刷新
+    }, 300000); // 5分钟刷新一次 (300秒)
 
     return () => clearInterval(interval);
-  }, []);
+  }, [authStatus.isConnected]); // 只在连接状态变化时重新设置定时器
 
   // 渲染仪表板
   const renderDashboard = () => (
@@ -728,6 +1070,19 @@ const EmailAssistAI: React.FC = () => {
         <Typography variant="subtitle1" color="text.secondary">
           基于DeepSeek AI的智能邮件分析系统
         </Typography>
+
+        {/* 仪表板功能说明 */}
+        <Card sx={{ mt: 2, bgcolor: 'rgba(76, 175, 80, 0.04)' }}>
+          <CardContent sx={{ py: 2 }}>
+            <Typography variant="subtitle2" color="success.main" gutterBottom>
+              📊 仪表板功能说明
+            </Typography>
+            <Typography variant="body2">
+              <strong>仪表板</strong> 提供邮件管理的总体概览和快捷入口：查看邮件统计数据、连接状态、AI分析状态、最新邮件预览等。
+              <strong>邮件列表</strong> 显示所有收件箱邮件并提供AI智能分析，支持搜索、分页和详细查看。
+            </Typography>
+          </CardContent>
+        </Card>
       </Box>
 
       {/* 认证状态卡片 */}
@@ -886,8 +1241,26 @@ const EmailAssistAI: React.FC = () => {
           收件箱邮件 - AI智能分析
         </Typography>
         <Typography variant="subtitle1" color="text.secondary">
-          收件箱中共 {pagination.totalCount} 封邮件 (包括已读和未读)
+          {viewMode === 'conversations'
+            ? `对话模式: 共 ${conversations.length} 个对话，${pagination.totalCount} 封邮件`
+            : `邮件模式: 共 ${pagination.totalCount} 封邮件 (包括已读和未读)`
+          }
         </Typography>
+
+        {/* 视图模式切换 */}
+        <Box sx={{ mt: 2 }}>
+          <FormControl size="small">
+            <InputLabel>显示模式</InputLabel>
+            <Select
+              value={viewMode}
+              label="显示模式"
+              onChange={(e) => setViewMode(e.target.value as 'emails' | 'conversations')}
+            >
+              <MenuItem value="conversations">🗂️ 对话分组模式 (推荐)</MenuItem>
+              <MenuItem value="emails">📧 单个邮件模式</MenuItem>
+            </Select>
+          </FormControl>
+        </Box>
       </Box>
 
       {/* 搜索和控制栏 */}
@@ -973,16 +1346,34 @@ const EmailAssistAI: React.FC = () => {
       {loading && <LinearProgress sx={{ mb: 2 }} />}
 
       {authStatus.isConnected ? (
-        emails.length > 0 ? (
+        (viewMode === 'conversations' ? conversations.length > 0 : emails.length > 0) ? (
           <Box>
-            {/* 邮件列表 */}
-            {emails.map((email) => (
-              <EmailListItem
-                key={email.id}
-                email={email}
-                onAnalyze={handleAnalyzeEmail}
-              />
-            ))}
+            {/* 邮件/对话列表 */}
+            {viewMode === 'conversations' ? (
+              conversations.map((conversation) => (
+                <ConversationListItem
+                  key={conversation.conversationId}
+                  conversation={conversation}
+                  onAnalyze={handleAnalyzeEmail}
+                  onAnalyzeConversation={handleAnalyzeConversation}
+                  onExpandConversation={(conversationId) => {
+                    // 在Outlook中打开对话
+                    const firstEmail = conversation.emails[0];
+                    if (firstEmail.webLink) {
+                      window.open(firstEmail.webLink, '_blank');
+                    }
+                  }}
+                />
+              ))
+            ) : (
+              emails.map((email) => (
+                <EmailListItem
+                  key={email.id}
+                  email={email}
+                  onAnalyze={handleAnalyzeEmail}
+                />
+              ))
+            )}
 
             {/* 分页控件 */}
             {pagination.totalPages > 1 && (
@@ -1017,7 +1408,7 @@ const EmailAssistAI: React.FC = () => {
             <CardContent sx={{ textAlign: 'center', py: 4 }}>
               <Search sx={{ fontSize: 60, color: 'text.secondary', mb: 2 }} />
               <Typography variant="h6" gutterBottom>
-                没有找到匹配的邮件
+                没有找到匹配的{viewMode === 'conversations' ? '对话' : '邮件'}
               </Typography>
               <Typography variant="body2" color="text.secondary" gutterBottom>
                 搜索关键词: "{searchQuery}"
@@ -1076,6 +1467,42 @@ const EmailAssistAI: React.FC = () => {
           基于DeepSeek AI的邮件智能分析
         </Typography>
       </Box>
+
+      {/* 功能说明卡片 */}
+      <Card sx={{ mb: 3, bgcolor: 'rgba(25, 118, 210, 0.04)' }}>
+        <CardContent>
+          <Typography variant="h6" gutterBottom color="primary">
+            💡 AI分析功能说明
+          </Typography>
+          <Typography variant="body2" paragraph>
+            AI智能分析系统会自动分析每封邮件的内容，提供以下智能功能：
+          </Typography>
+          <Grid container spacing={2}>
+            <Grid item xs={12} md={6}>
+              <Typography variant="body2" gutterBottom>
+                📊 <strong>情感分析</strong>：识别邮件的情感倾向（积极/中性/消极）
+              </Typography>
+              <Typography variant="body2" gutterBottom>
+                🚨 <strong>紧急度评估</strong>：智能判断邮件的重要程度和紧急性
+              </Typography>
+              <Typography variant="body2" gutterBottom>
+                🏷️ <strong>自动分类</strong>：根据内容自动归类邮件（工作/会议/通知等）
+              </Typography>
+            </Grid>
+            <Grid item xs={12} md={6}>
+              <Typography variant="body2" gutterBottom>
+                🔍 <strong>关键词提取</strong>：识别邮件中的重要关键词和主题
+              </Typography>
+              <Typography variant="body2" gutterBottom>
+                📝 <strong>智能摘要</strong>：生成邮件内容的简洁摘要
+              </Typography>
+              <Typography variant="body2" gutterBottom>
+                💡 <strong>操作建议</strong>：提供智能化的后续行动建议
+              </Typography>
+            </Grid>
+          </Grid>
+        </CardContent>
+      </Card>
 
       <Grid container spacing={3}>
         <Grid item xs={12} md={8}>

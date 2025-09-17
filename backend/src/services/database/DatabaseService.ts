@@ -5,8 +5,8 @@ import {
   EmailSearchQuery,
   EmailProvider 
 } from '../../types';
-import { logger } from '../../utils/logger';
-import { config } from '../../config';
+import logger from '../../utils/logger';
+import config from '../../config';
 
 /**
  * 数据库服务类
@@ -18,7 +18,7 @@ export class DatabaseService {
 
   private constructor() {
     this.pool = new Pool({
-      connectionString: config.DATABASE_URL,
+      connectionString: config.env.DATABASE_URL,
       max: 20,
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 2000,
@@ -428,13 +428,13 @@ export class DatabaseService {
 
       if (searchQuery.isRead !== undefined) {
         query += ` AND is_read = $${paramIndex}`;
-        values.push(searchQuery.isRead);
+        values.push(searchQuery.isRead ? 'true' : 'false');
         paramIndex++;
       }
 
       if (searchQuery.dateRange) {
         query += ` AND received_at BETWEEN $${paramIndex} AND $${paramIndex + 1}`;
-        values.push(searchQuery.dateRange.start, searchQuery.dateRange.end);
+        values.push(searchQuery.dateRange.start.toISOString(), searchQuery.dateRange.end.toISOString());
         paramIndex += 2;
       }
 
@@ -448,13 +448,13 @@ export class DatabaseService {
       // 分页
       if (searchQuery.limit) {
         query += ` LIMIT $${paramIndex}`;
-        values.push(searchQuery.limit);
+        values.push(searchQuery.limit.toString());
         paramIndex++;
       }
 
       if (searchQuery.offset) {
         query += ` OFFSET $${paramIndex}`;
-        values.push(searchQuery.offset);
+        values.push(searchQuery.offset.toString());
         paramIndex++;
       }
 

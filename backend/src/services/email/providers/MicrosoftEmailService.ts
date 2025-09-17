@@ -10,7 +10,7 @@ import {
   RateLimitConfig
 } from '../../../types';
 import { BaseEmailService } from '../BaseEmailService';
-import { logger } from '../../../utils/logger';
+import logger from '../../../utils/logger';
 
 /**
  * Microsoft Graph API邮件服务实现

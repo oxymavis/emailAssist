@@ -1,0 +1,197 @@
+/* React Grid Layout 样式 */
+
+.react-grid-layout {
+  position: relative;
+}
+
+.react-grid-item {
+  transition: all 200ms ease;
+  transition-property: left, top, width, height;
+}
+
+.react-grid-item.cssTransforms {
+  transition-property: transform, width, height;
+}
+
+.react-grid-item > .react-resizable-handle {
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  bottom: 0;
+  right: 0;
+  background: url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNiIgaGVpZ2h0PSI2IiB2aWV3Qm94PSIwIDAgNiA2IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxnIGZpbGw9IiM0NDZHM0EiIGZpbGwtcnVsZT0iZXZlbm9kZCIgb3BhY2l0eT0iLjMiPjxwYXRoIGQ9Im0gMSw1IDAtNCAxLDAgMCw0IDAsMSAtMSwwIDAsMSIvPjxwYXRoIGQ9Im0gMyw1IDAtNCAxLDAgMCw0IDAsMSAtMSwwIDAsMSIvPjxwYXRoIGQ9Im0gNSw1IDAtNCAxLDAgMCw0IDAsMSAtMSwwIDAsMSIvPjwvZz48L3N2Zz4=');
+  background-position: bottom right;
+  padding: 0 3px 3px 0;
+  background-repeat: no-repeat;
+  background-origin: content-box;
+  box-sizing: border-box;
+  cursor: se-resize;
+  z-index: 999;
+}
+
+.react-grid-item.react-grid-placeholder {
+  background: rgba(25, 118, 210, 0.15);
+  opacity: 0.6;
+  transition-duration: 100ms;
+  z-index: 2;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  -o-user-select: none;
+  user-select: none;
+  border: 2px dashed rgba(25, 118, 210, 0.4);
+  border-radius: 8px;
+}
+
+.react-grid-item.react-draggable-dragging {
+  transition: none;
+  z-index: 3;
+  opacity: 0.8;
+}
+
+.react-grid-item.cssTransforms.react-draggable-dragging {
+  transition: none;
+  z-index: 3;
+  transform: none !important;
+}
+
+.react-grid-item > .react-resizable-handle::after {
+  content: "";
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 5px;
+  height: 5px;
+  border-right: 2px solid rgba(0, 0, 0, 0.4);
+  border-bottom: 2px solid rgba(0, 0, 0, 0.4);
+}
+
+/* 编辑模式下的样式增强 */
+.react-grid-item.edit-mode {
+  border: 2px dashed rgba(25, 118, 210, 0.3);
+  border-radius: 8px;
+}
+
+.react-grid-item.edit-mode:hover {
+  border-color: rgba(25, 118, 210, 0.6);
+  box-shadow: 0 4px 12px rgba(25, 118, 210, 0.2);
+}
+
+/* 响应式断点样式 */
+@media (max-width: 768px) {
+  .react-grid-item {
+    margin-bottom: 16px;
+  }
+  
+  .react-grid-item > .react-resizable-handle {
+    display: none;
+  }
+}
+
+/* 深色主题支持 */
+@media (prefers-color-scheme: dark) {
+  .react-grid-item.react-grid-placeholder {
+    background: rgba(144, 202, 249, 0.15);
+    border-color: rgba(144, 202, 249, 0.4);
+  }
+  
+  .react-grid-item.edit-mode {
+    border-color: rgba(144, 202, 249, 0.3);
+  }
+  
+  .react-grid-item.edit-mode:hover {
+    border-color: rgba(144, 202, 249, 0.6);
+    box-shadow: 0 4px 12px rgba(144, 202, 249, 0.2);
+  }
+  
+  .react-grid-item > .react-resizable-handle::after {
+    border-right-color: rgba(255, 255, 255, 0.4);
+    border-bottom-color: rgba(255, 255, 255, 0.4);
+  }
+}
+
+/* 组件hover效果 */
+.widget-container {
+  height: 100%;
+  border-radius: 8px;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.widget-container:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
+}
+
+/* 拖拽指示器动画 */
+.widget-drag-handle {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.widget-drag-handle:hover {
+  transform: scale(1.1);
+  opacity: 1 !important;
+}
+
+/* 控制按钮组动画 */
+.widget-controls {
+  backdrop-filter: blur(8px);
+  border-radius: 6px;
+}
+
+.widget-controls > button {
+  transition: all 0.2s ease;
+}
+
+.widget-controls > button:hover {
+  transform: scale(1.1);
+}
+
+/* 全屏模式适配 */
+.fullscreen-widget {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  z-index: 9999 !important;
+  background: white;
+}
+
+/* 加载状态动画 */
+.widget-loading {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.widget-loading::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 20px;
+  height: 20px;
+  margin: -10px 0 0 -10px;
+  border: 2px solid #f3f3f3;
+  border-top: 2px solid #3498db;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* 刷新动画 */
+.widget-refreshing .refresh-icon {
+  animation: refreshSpin 1s linear infinite;
+}
+
+@keyframes refreshSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}

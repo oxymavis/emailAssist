@@ -416,6 +416,321 @@ CREATE TABLE IF NOT EXISTS scheduled_reports (
 );
 
 -- =============================================
+-- P1.2 智能通知和提醒系统 表结构
+-- =============================================
+
+-- Notification Channels table (通知渠道管理)
+CREATE TABLE IF NOT EXISTS notification_channels (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    type VARCHAR(20) NOT NULL CHECK (type IN ('websocket', 'email', 'webhook', 'sms')),
+    is_enabled BOOLEAN DEFAULT true,
+    
+    -- Channel configuration
+    config JSONB NOT NULL DEFAULT '{}',
+    /*
+    Example config structures:
+    - WebSocket: {"socketNamespace": "/notifications"}
+    - Email: {"smtpSettings": {"host": "smtp.gmail.com", "port": 587, "secure": true, "auth": {"user": "...", "pass": "..."}}}
+    - Webhook: {"webhookUrl": "https://...", "webhookSecret": "...", "webhookHeaders": {...}}
+    - SMS: {"smsProvider": "twilio", "smsConfig": {...}}
+    */
+    
+    -- Retry configuration
+    retry_config JSONB DEFAULT '{
+        "maxAttempts": 3,
+        "retryDelay": 60,
+        "backoffMultiplier": 2
+    }',
+    
+    -- Statistics
+    total_notifications INTEGER DEFAULT 0,
+    successful_notifications INTEGER DEFAULT 0,
+    failed_notifications INTEGER DEFAULT 0,
+    
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Notification Templates table (通知模板管理)
+CREATE TABLE IF NOT EXISTS notification_templates (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    category VARCHAR(50) NOT NULL CHECK (category IN ('email_alert', 'priority_email', 'ai_analysis', 'system_alert', 'custom')),
+    
+    -- Template channels configuration
+    channels JSONB NOT NULL DEFAULT '[]',
+    /*
+    Example channels structure:
+    [
+        {
+            "channelId": "uuid",
+            "isEnabled": true,
+            "templateContent": {
+                "subject": "{{title}}",
+                "htmlBody": "...",
+                "textBody": "...",
+                "title": "{{title}}",
+                "message": "{{message}}",
+                "icon": "email",
+                "payload": {...}
+            }
+        }
+    ]
+    */
+    
+    -- Template variables definition
+    variables JSONB DEFAULT '[]',
+    /*
+    Example variables structure:
+    [
+        {
+            "name": "title",
+            "type": "string",
+            "description": "Notification title",
+            "required": true,
+            "defaultValue": "New Notification"
+        }
+    ]
+    */
+    
+    -- Metadata
+    is_system BOOLEAN DEFAULT false,
+    created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    usage_count INTEGER DEFAULT 0,
+    
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Notification Rules table (智能通知规则)
+CREATE TABLE IF NOT EXISTS notification_rules (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    is_enabled BOOLEAN DEFAULT true,
+    priority INTEGER DEFAULT 5 CHECK (priority >= 1 AND priority <= 10), -- 1-10, higher = more priority
+    
+    -- Trigger configuration
+    triggers JSONB NOT NULL DEFAULT '[]',
+    /*
+    Example triggers structure:
+    [
+        {
+            "type": "email_analysis",
+            "conditions": {
+                "analysisTypes": ["sentiment", "priority"],
+                "sentimentThreshold": -0.5,
+                "priorityThreshold": 0.8,
+                "categories": ["urgent", "complaint"],
+                "additionalFilters": {
+                    "senderDomains": ["@important-client.com"],
+                    "subjectKeywords": ["urgent", "asap"],
+                    "timeRange": {"start": "09:00", "end": "18:00"},
+                    "workingDaysOnly": true
+                }
+            }
+        },
+        {
+            "type": "time_based",
+            "conditions": {
+                "schedule": {
+                    "type": "cron",
+                    "expression": "0 9 * * 1-5",
+                    "timezone": "Asia/Shanghai"
+                }
+            }
+        }
+    ]
+    */
+    
+    -- Action configuration
+    actions JSONB NOT NULL DEFAULT '[]',
+    /*
+    Example actions structure:
+    [
+        {
+            "channelId": "uuid",
+            "templateId": "uuid",
+            "isEnabled": true,
+            "throttling": {
+                "maxPerHour": 10,
+                "maxPerDay": 50,
+                "cooldownMinutes": 30
+            }
+        }
+    ]
+    */
+    
+    -- Statistics
+    trigger_count INTEGER DEFAULT 0,
+    execution_count INTEGER DEFAULT 0,
+    last_triggered_at TIMESTAMP WITH TIME ZONE,
+    
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Notification Preferences table (用户通知偏好)
+CREATE TABLE IF NOT EXISTS notification_preferences (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+    
+    -- Global settings
+    global_settings JSONB DEFAULT '{
+        "isEnabled": true,
+        "quietHours": {
+            "start": "22:00",
+            "end": "08:00",
+            "timezone": "Asia/Shanghai"
+        },
+        "workingDaysOnly": false,
+        "maxNotificationsPerHour": 20
+    }',
+    
+    -- Channel preferences
+    channel_preferences JSONB DEFAULT '[]',
+    /*
+    Example channel_preferences structure:
+    [
+        {
+            "channelId": "uuid",
+            "isEnabled": true,
+            "priority": 1,
+            "settings": {
+                "emailNotifications": true,
+                "websocketNotifications": true
+            }
+        }
+    ]
+    */
+    
+    -- Category preferences
+    category_preferences JSONB DEFAULT '[
+        {"category": "email_alert", "isEnabled": true, "minPriority": 1},
+        {"category": "priority_email", "isEnabled": true, "minPriority": 3},
+        {"category": "ai_analysis", "isEnabled": true, "minPriority": 2},
+        {"category": "system_alert", "isEnabled": true, "minPriority": 1},
+        {"category": "custom", "isEnabled": true, "minPriority": 1}
+    ]',
+    
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Notifications table (通知实例记录)
+CREATE TABLE IF NOT EXISTS notifications (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    rule_id UUID REFERENCES notification_rules(id) ON DELETE SET NULL,
+    template_id UUID NOT NULL REFERENCES notification_templates(id) ON DELETE CASCADE,
+    channel_id UUID NOT NULL REFERENCES notification_channels(id) ON DELETE CASCADE,
+    
+    -- Notification content
+    priority INTEGER NOT NULL CHECK (priority >= 1 AND priority <= 10),
+    status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'processing', 'sent', 'failed', 'cancelled')),
+    title VARCHAR(500) NOT NULL,
+    message TEXT NOT NULL,
+    
+    -- Template data and context
+    data JSONB DEFAULT '{}', -- Template variables and context data
+    
+    -- Source metadata
+    metadata JSONB DEFAULT '{}',
+    /*
+    Example metadata structure:
+    {
+        "sourceType": "email_analysis",
+        "sourceId": "email-uuid",
+        "triggeredBy": "user-uuid",
+        "processingStartedAt": "2024-01-01T...",
+        "processingCompletedAt": "2024-01-01T...",
+        "retryCount": 0,
+        "lastRetryAt": null
+    }
+    */
+    
+    -- Delivery tracking
+    delivery_results JSONB DEFAULT '[]',
+    /*
+    Example delivery_results structure:
+    [
+        {
+            "attempt": 1,
+            "attemptedAt": "2024-01-01T...",
+            "result": "success",
+            "errorCode": null,
+            "errorMessage": null,
+            "responseData": {...}
+        }
+    ]
+    */
+    
+    -- User interaction
+    read_at TIMESTAMP WITH TIME ZONE,
+    archived_at TIMESTAMP WITH TIME ZONE,
+    
+    -- Processing timestamps
+    processing_started_at TIMESTAMP WITH TIME ZONE,
+    processing_completed_at TIMESTAMP WITH TIME ZONE,
+    
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Notification Queue table (通知队列管理)
+CREATE TABLE IF NOT EXISTS notification_queue (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    notification_id UUID NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
+    queue_name VARCHAR(100) DEFAULT 'default',
+    priority INTEGER NOT NULL DEFAULT 5,
+    
+    -- Queue status
+    status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'processing', 'completed', 'failed', 'retrying')),
+    attempts INTEGER DEFAULT 0,
+    max_attempts INTEGER DEFAULT 3,
+    
+    -- Scheduling
+    scheduled_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    processing_started_at TIMESTAMP WITH TIME ZONE,
+    processing_completed_at TIMESTAMP WITH TIME ZONE,
+    next_retry_at TIMESTAMP WITH TIME ZONE,
+    
+    -- Error tracking
+    last_error TEXT,
+    error_details JSONB DEFAULT '{}',
+    
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Notification Analytics table (通知统计分析)
+CREATE TABLE IF NOT EXISTS notification_analytics (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    notification_id UUID REFERENCES notifications(id) ON DELETE CASCADE,
+    channel_id UUID REFERENCES notification_channels(id) ON DELETE SET NULL,
+    template_id UUID REFERENCES notification_templates(id) ON DELETE SET NULL,
+    rule_id UUID REFERENCES notification_rules(id) ON DELETE SET NULL,
+    
+    -- Event tracking
+    event_type VARCHAR(50) NOT NULL CHECK (event_type IN ('sent', 'delivered', 'opened', 'clicked', 'failed', 'bounced')),
+    event_data JSONB DEFAULT '{}',
+    
+    -- Timing metrics
+    processing_time_ms INTEGER,
+    delivery_time_ms INTEGER,
+    
+    -- Context
+    user_agent TEXT,
+    ip_address INET,
+    
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- =============================================
 -- 2. 索引优化 (高性能查询关键)
 -- =============================================
 
@@ -505,6 +820,65 @@ CREATE INDEX IF NOT EXISTS idx_report_schedules_template_id ON report_schedules(
 CREATE INDEX IF NOT EXISTS idx_report_schedules_status ON report_schedules(status);
 CREATE INDEX IF NOT EXISTS idx_report_schedules_next_run_at ON report_schedules(next_run_at);
 CREATE INDEX IF NOT EXISTS idx_report_schedules_is_active ON report_schedules(is_active);
+
+-- Notification Channels 表索引
+CREATE INDEX IF NOT EXISTS idx_notification_channels_type ON notification_channels(type);
+CREATE INDEX IF NOT EXISTS idx_notification_channels_is_enabled ON notification_channels(is_enabled);
+
+-- Notification Templates 表索引
+CREATE INDEX IF NOT EXISTS idx_notification_templates_category ON notification_templates(category);
+CREATE INDEX IF NOT EXISTS idx_notification_templates_is_system ON notification_templates(is_system);
+CREATE INDEX IF NOT EXISTS idx_notification_templates_created_by ON notification_templates(created_by);
+CREATE INDEX IF NOT EXISTS idx_notification_templates_usage_count ON notification_templates(usage_count DESC);
+
+-- Notification Rules 表索引
+CREATE INDEX IF NOT EXISTS idx_notification_rules_user_id ON notification_rules(user_id);
+CREATE INDEX IF NOT EXISTS idx_notification_rules_is_enabled ON notification_rules(is_enabled);
+CREATE INDEX IF NOT EXISTS idx_notification_rules_priority ON notification_rules(priority DESC);
+CREATE INDEX IF NOT EXISTS idx_notification_rules_user_enabled ON notification_rules(user_id, is_enabled);
+CREATE INDEX IF NOT EXISTS idx_notification_rules_triggers_gin ON notification_rules USING GIN (triggers);
+
+-- Notification Preferences 表索引
+CREATE INDEX IF NOT EXISTS idx_notification_preferences_user_id ON notification_preferences(user_id);
+
+-- Notifications 表核心索引（高性能关键）
+CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications(user_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_rule_id ON notifications(rule_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_template_id ON notifications(template_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_channel_id ON notifications(channel_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_status ON notifications(status);
+CREATE INDEX IF NOT EXISTS idx_notifications_priority ON notifications(priority DESC);
+CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notifications_read_at ON notifications(read_at);
+
+-- Notifications 复合索引（查询优化核心）
+CREATE INDEX IF NOT EXISTS idx_notifications_user_status ON notifications(user_id, status);
+CREATE INDEX IF NOT EXISTS idx_notifications_user_created ON notifications(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notifications_user_read ON notifications(user_id, read_at);
+CREATE INDEX IF NOT EXISTS idx_notifications_user_priority ON notifications(user_id, priority DESC);
+CREATE INDEX IF NOT EXISTS idx_notifications_status_created ON notifications(status, created_at DESC);
+
+-- Notifications JSON字段索引
+CREATE INDEX IF NOT EXISTS idx_notifications_metadata_gin ON notifications USING GIN (metadata);
+CREATE INDEX IF NOT EXISTS idx_notifications_data_gin ON notifications USING GIN (data);
+
+-- Notification Queue 表索引
+CREATE INDEX IF NOT EXISTS idx_notification_queue_notification_id ON notification_queue(notification_id);
+CREATE INDEX IF NOT EXISTS idx_notification_queue_status ON notification_queue(status);
+CREATE INDEX IF NOT EXISTS idx_notification_queue_priority ON notification_queue(priority DESC);
+CREATE INDEX IF NOT EXISTS idx_notification_queue_scheduled_at ON notification_queue(scheduled_at);
+CREATE INDEX IF NOT EXISTS idx_notification_queue_next_retry_at ON notification_queue(next_retry_at);
+CREATE INDEX IF NOT EXISTS idx_notification_queue_status_scheduled ON notification_queue(status, scheduled_at);
+
+-- Notification Analytics 表索引
+CREATE INDEX IF NOT EXISTS idx_notification_analytics_user_id ON notification_analytics(user_id);
+CREATE INDEX IF NOT EXISTS idx_notification_analytics_notification_id ON notification_analytics(notification_id);
+CREATE INDEX IF NOT EXISTS idx_notification_analytics_channel_id ON notification_analytics(channel_id);
+CREATE INDEX IF NOT EXISTS idx_notification_analytics_template_id ON notification_analytics(template_id);
+CREATE INDEX IF NOT EXISTS idx_notification_analytics_rule_id ON notification_analytics(rule_id);
+CREATE INDEX IF NOT EXISTS idx_notification_analytics_event_type ON notification_analytics(event_type);
+CREATE INDEX IF NOT EXISTS idx_notification_analytics_created_at ON notification_analytics(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notification_analytics_user_event ON notification_analytics(user_id, event_type);
 
 -- =============================================
 -- 3. 创建触发器函数

@@ -1,14 +1,45 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import { Email, EmailAnalysis, FilterRule, Report, Workflow, UserSettings, DashboardStats, Notification } from '@/types';
+
+// API基础配置
+const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:3001/api';
+import {
+  Email,
+  EmailAnalysis,
+  FilterRule,
+  Report,
+  Workflow,
+  UserSettings,
+  DashboardStats,
+  Notification,
+  DashboardState,
+  DashboardWidget,
+  DashboardLayout,
+  ChartFilter,
+  TimeRange,
+  DrillDownConfig,
+  EmailVolumeData,
+  SentimentData,
+  CategoryData,
+  PriorityHeatmapData,
+  ResponseTimeData,
+  TopSenderData,
+  User,
+  AuthState,
+  AuthTokens
+} from '@/types';
 
 // 应用状态接口
 interface AppState {
+  // 用户认证状态
+  auth: AuthState;
+  user: User | null;
+
   // 主题和UI状态
   theme: 'light' | 'dark' | 'auto';
   sidebarOpen: boolean;
   loading: boolean;
-  
+
   // 用户设置
   settings: UserSettings;
   
@@ -31,7 +62,36 @@ interface AppState {
   
   // 通知
   notifications: Notification[];
+  notificationCount: number;
+  workflowStats: any;
+  teamActivity: any;
   
+  // 高级仪表板状态
+  dashboardState: DashboardState;
+  
+  // 高级图表数据
+  emailVolumeData: EmailVolumeData[];
+  sentimentData: SentimentData[];
+  categoryData: CategoryData[];
+  priorityHeatmapData: PriorityHeatmapData[];
+  responseTimeData: ResponseTimeData[];
+  topSendersData: TopSenderData[];
+  
+  // 数据钻取配置
+  drillDownConfig: DrillDownConfig | null;
+  
+  // 认证相关 Actions
+  login: (user: User, tokens: AuthTokens) => void;
+  logout: () => void;
+  setAuthLoading: (loading: boolean) => void;
+  setAuthError: (error: string | null) => void;
+  updateUser: (updates: Partial<User>) => void;
+  clearAuth: () => void;
+  refreshAuthToken: () => Promise<boolean>;
+  checkAuthStatus: () => Promise<boolean>;
+  setUser: (user: User | null) => void;
+  setAuthToken: (token: string | null) => void;
+
   // Actions
   setTheme: (theme: 'light' | 'dark' | 'auto') => void;
   toggleSidebar: () => void;
@@ -71,10 +131,40 @@ interface AppState {
   markNotificationAsRead: (id: string) => void;
   removeNotification: (id: string) => void;
   clearNotifications: () => void;
+  setNotificationCount: (count: number) => void;
+  updateWorkflowStats: (stats: any) => void;
+  updateTeamActivity: (activity: any) => void;
+  
+  // 高级仪表板actions
+  setDashboardState: (state: Partial<DashboardState>) => void;
+  updateDashboardLayout: (layouts: DashboardLayout[]) => void;
+  addDashboardWidget: (widget: DashboardWidget) => void;
+  removeDashboardWidget: (widgetId: string) => void;
+  updateDashboardWidget: (widgetId: string, updates: Partial<DashboardWidget>) => void;
+  setDashboardEditMode: (editMode: boolean) => void;
+  setGlobalFilters: (filters: ChartFilter[]) => void;
+  setRefreshInterval: (interval: number) => void;
+  
+  // 图表数据actions
+  setEmailVolumeData: (data: EmailVolumeData[]) => void;
+  setSentimentData: (data: SentimentData[]) => void;
+  setCategoryData: (data: CategoryData[]) => void;
+  setPriorityHeatmapData: (data: PriorityHeatmapData[]) => void;
+  setResponseTimeData: (data: ResponseTimeData[]) => void;
+  setTopSendersData: (data: TopSenderData[]) => void;
+  
+  // 数据钻取actions
+  setDrillDownConfig: (config: DrillDownConfig | null) => void;
+  updateDrillDownConfig: (updates: Partial<DrillDownConfig>) => void;
 }
 
 // 默认设置
 const defaultSettings: UserSettings = {
+  id: 'default',
+  userId: 'default',
+  timezone: 'Asia/Shanghai',
+  email: 'user@example.com',
+  language: 'zh-CN',
   notifications: {
     email: true,
     push: true,
@@ -115,10 +205,175 @@ const defaultStats: DashboardStats = {
   lastSyncTime: new Date().toISOString(),
 };
 
+// 默认仪表板状态
+const defaultDashboardState: DashboardState = {
+  layouts: [],
+  widgets: [],
+  selectedWidget: null,
+  isEditMode: false,
+  customLayouts: {},
+  globalFilters: [],
+  refreshInterval: 300000, // 5分钟
+  lastUpdate: new Date().toISOString(),
+};
+
+// 默认组件配置
+const createDefaultWidgets = (): DashboardWidget[] => [
+  {
+    id: 'widget-email-volume',
+    type: 'email-volume',
+    title: 'Email Volume Analysis',
+    description: 'Track email volume trends over time',
+    config: {
+      chartType: 'line',
+      showLegend: true,
+      showGrid: true,
+      animate: true,
+    },
+    layout: {
+      i: 'widget-email-volume',
+      x: 0,
+      y: 0,
+      w: 6,
+      h: 4,
+      minW: 4,
+      minH: 3,
+    },
+    isVisible: true,
+    refreshInterval: 60000,
+  },
+  {
+    id: 'widget-sentiment',
+    type: 'sentiment-analysis',
+    title: 'Sentiment Analysis',
+    description: 'Distribution of email sentiment',
+    config: {
+      chartType: 'donut',
+      showDetails: true,
+      showTrends: true,
+    },
+    layout: {
+      i: 'widget-sentiment',
+      x: 6,
+      y: 0,
+      w: 3,
+      h: 4,
+      minW: 3,
+      minH: 3,
+    },
+    isVisible: true,
+    refreshInterval: 120000,
+  },
+  {
+    id: 'widget-categories',
+    type: 'category-distribution',
+    title: 'Category Distribution',
+    description: 'Email categorization statistics',
+    config: {
+      chartType: 'bar',
+      showSubcategories: true,
+      maxCategories: 10,
+    },
+    layout: {
+      i: 'widget-categories',
+      x: 9,
+      y: 0,
+      w: 3,
+      h: 4,
+      minW: 3,
+      minH: 3,
+    },
+    isVisible: true,
+    refreshInterval: 180000,
+  },
+  {
+    id: 'widget-heatmap',
+    type: 'priority-heatmap',
+    title: 'Priority Heatmap',
+    description: 'Email priority distribution by time',
+    config: {
+      colorScheme: ['intensity'],
+      showLabels: true,
+      showLegend: true,
+    },
+    layout: {
+      i: 'widget-heatmap',
+      x: 0,
+      y: 4,
+      w: 6,
+      h: 3,
+      minW: 4,
+      minH: 2,
+    },
+    isVisible: true,
+    refreshInterval: 300000,
+  },
+  {
+    id: 'widget-response-time',
+    type: 'response-time',
+    title: 'Response Time Analysis',
+    description: 'Email response time trends',
+    config: {
+      chartType: 'area',
+      showTrends: true,
+      showBenchmark: true,
+      benchmarkValue: 2,
+    },
+    layout: {
+      i: 'widget-response-time',
+      x: 6,
+      y: 4,
+      w: 6,
+      h: 4,
+      minW: 4,
+      minH: 3,
+    },
+    isVisible: true,
+    refreshInterval: 120000,
+  },
+  {
+    id: 'widget-top-senders',
+    type: 'top-senders',
+    title: 'Top Senders',
+    description: 'Most active email senders',
+    config: {
+      viewMode: 'table',
+      maxSenders: 10,
+      showDetails: true,
+    },
+    layout: {
+      i: 'widget-top-senders',
+      x: 0,
+      y: 7,
+      w: 12,
+      h: 4,
+      minW: 6,
+      minH: 3,
+    },
+    isVisible: true,
+    refreshInterval: 240000,
+  },
+];
+
+// 默认认证状态
+const defaultAuthState: AuthState = {
+  isAuthenticated: false,
+  isLoading: false,
+  user: null,
+  accessToken: null,
+  refreshToken: null,
+  tokenExpiry: null,
+  error: null,
+};
+
 // 创建store
 export const useAppStore = create<AppState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
+      // 认证初始状态
+      auth: defaultAuthState,
+      user: null,
+
       // 初始状态
       theme: 'light',
       sidebarOpen: true,
@@ -132,6 +387,25 @@ export const useAppStore = create<AppState>()(
       workflows: [],
       dashboardStats: defaultStats,
       notifications: [],
+      notificationCount: 0,
+      workflowStats: null,
+      teamActivity: null,
+      
+      // 高级仪表板状态
+      dashboardState: {
+        ...defaultDashboardState,
+        widgets: createDefaultWidgets(),
+        layouts: createDefaultWidgets().map(w => w.layout),
+      },
+      
+      // 图表数据初始状态
+      emailVolumeData: [],
+      sentimentData: [],
+      categoryData: [],
+      priorityHeatmapData: [],
+      responseTimeData: [],
+      topSendersData: [],
+      drillDownConfig: null,
 
       // 主题和UI actions
       setTheme: (theme) => set({ theme }),
@@ -233,6 +507,281 @@ export const useAppStore = create<AppState>()(
           notifications: state.notifications.filter((notification) => notification.id !== id),
         })),
       clearNotifications: () => set({ notifications: [] }),
+      setNotificationCount: (count) => set({ notificationCount: count }),
+      updateWorkflowStats: (stats) => set({ workflowStats: stats }),
+      updateTeamActivity: (activity) => set({ teamActivity: activity }),
+
+      // 高级仪表板actions
+      setDashboardState: (updates) =>
+        set((state) => ({
+          dashboardState: { ...state.dashboardState, ...updates },
+        })),
+
+      updateDashboardLayout: (layouts) =>
+        set((state) => ({
+          dashboardState: {
+            ...state.dashboardState,
+            layouts,
+            lastUpdate: new Date().toISOString(),
+          },
+        })),
+
+      addDashboardWidget: (widget) =>
+        set((state) => ({
+          dashboardState: {
+            ...state.dashboardState,
+            widgets: [...state.dashboardState.widgets, widget],
+            layouts: [...state.dashboardState.layouts, widget.layout],
+            lastUpdate: new Date().toISOString(),
+          },
+        })),
+
+      removeDashboardWidget: (widgetId) =>
+        set((state) => ({
+          dashboardState: {
+            ...state.dashboardState,
+            widgets: state.dashboardState.widgets.filter(w => w.id !== widgetId),
+            layouts: state.dashboardState.layouts.filter(l => l.i !== widgetId),
+            selectedWidget: state.dashboardState.selectedWidget === widgetId 
+              ? null 
+              : state.dashboardState.selectedWidget,
+            lastUpdate: new Date().toISOString(),
+          },
+        })),
+
+      updateDashboardWidget: (widgetId, updates) =>
+        set((state) => ({
+          dashboardState: {
+            ...state.dashboardState,
+            widgets: state.dashboardState.widgets.map(widget =>
+              widget.id === widgetId ? { ...widget, ...updates } : widget
+            ),
+            lastUpdate: new Date().toISOString(),
+          },
+        })),
+
+      setDashboardEditMode: (editMode) =>
+        set((state) => ({
+          dashboardState: {
+            ...state.dashboardState,
+            isEditMode: editMode,
+            selectedWidget: editMode ? state.dashboardState.selectedWidget : null,
+          },
+        })),
+
+      setGlobalFilters: (filters) =>
+        set((state) => ({
+          dashboardState: {
+            ...state.dashboardState,
+            globalFilters: filters,
+            lastUpdate: new Date().toISOString(),
+          },
+        })),
+
+      setRefreshInterval: (interval) =>
+        set((state) => ({
+          dashboardState: {
+            ...state.dashboardState,
+            refreshInterval: interval,
+          },
+        })),
+
+      // 图表数据actions
+      setEmailVolumeData: (emailVolumeData) => set({ emailVolumeData }),
+      setSentimentData: (sentimentData) => set({ sentimentData }),
+      setCategoryData: (categoryData) => set({ categoryData }),
+      setPriorityHeatmapData: (priorityHeatmapData) => set({ priorityHeatmapData }),
+      setResponseTimeData: (responseTimeData) => set({ responseTimeData }),
+      setTopSendersData: (topSendersData) => set({ topSendersData }),
+
+      // 数据钻取actions
+      setDrillDownConfig: (drillDownConfig) => set({ drillDownConfig }),
+      updateDrillDownConfig: (updates) =>
+        set((state) => ({
+          drillDownConfig: state.drillDownConfig
+            ? { ...state.drillDownConfig, ...updates }
+            : null,
+        })),
+
+      // 认证actions
+      login: (user: User, tokens: AuthTokens) => {
+        // 保存token到localStorage
+        localStorage.setItem('authToken', tokens.accessToken);
+        localStorage.setItem('refreshToken', tokens.refreshToken);
+        localStorage.setItem('tokenExpiry', (Date.now() + tokens.expiresIn * 1000).toString());
+
+        set((state) => ({
+          auth: {
+            ...state.auth,
+            isAuthenticated: true,
+            isLoading: false,
+            user,
+            accessToken: tokens.accessToken,
+            refreshToken: tokens.refreshToken,
+            tokenExpiry: Date.now() + tokens.expiresIn * 1000,
+            error: null,
+          },
+        }));
+      },
+
+      logout: () => {
+        // 清除localStorage中的token
+        localStorage.removeItem('authToken');
+        localStorage.removeItem('refreshToken');
+        localStorage.removeItem('tokenExpiry');
+
+        set((state) => ({
+          auth: defaultAuthState,
+          // 清除用户相关数据
+          emails: [],
+          selectedEmail: null,
+          emailAnalysis: {},
+          reports: [],
+          workflows: [],
+          dashboardStats: defaultStats,
+        }));
+      },
+
+      setAuthLoading: (loading: boolean) =>
+        set((state) => ({
+          auth: { ...state.auth, isLoading: loading },
+        })),
+
+      setAuthError: (error: string | null) =>
+        set((state) => ({
+          auth: { ...state.auth, error, isLoading: false },
+        })),
+
+      updateUser: (updates: Partial<User>) =>
+        set((state) => ({
+          auth: {
+            ...state.auth,
+            user: state.auth.user ? { ...state.auth.user, ...updates } : null,
+          },
+        })),
+
+      clearAuth: () =>
+        set((state) => ({
+          auth: defaultAuthState,
+        })),
+
+      refreshAuthToken: async () => {
+        const state = get();
+        const { refreshToken } = state.auth;
+
+        if (!refreshToken) {
+          return false;
+        }
+
+        try {
+          // 调用refresh token API
+          const response = await fetch(`${API_BASE_URL}/auth/microsoft/refresh`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ refreshToken }),
+          });
+
+          if (!response.ok) {
+            throw new Error('Token refresh failed');
+          }
+
+          const { data } = await response.json();
+          const { tokens } = data;
+
+          // 更新token
+          localStorage.setItem('authToken', tokens.accessToken);
+          localStorage.setItem('tokenExpiry', (Date.now() + tokens.expiresIn * 1000).toString());
+
+          set((prevState) => ({
+            auth: {
+              ...prevState.auth,
+              accessToken: tokens.accessToken,
+              tokenExpiry: Date.now() + tokens.expiresIn * 1000,
+            },
+          }));
+
+          return true;
+        } catch (error) {
+          console.error('Token refresh failed:', error);
+          // 刷新失败，清除认证状态
+          get().logout();
+          return false;
+        }
+      },
+
+      checkAuthStatus: async () => {
+        const state = get();
+        const token = localStorage.getItem('authToken');
+        const tokenExpiry = localStorage.getItem('tokenExpiry');
+
+        if (!token || !tokenExpiry) {
+          return false;
+        }
+
+        const expiryTime = parseInt(tokenExpiry);
+        const now = Date.now();
+
+        // 如果token即将过期（提前5分钟刷新）
+        if (expiryTime - now < 5 * 60 * 1000) {
+          const refreshSuccess = await get().refreshAuthToken();
+          if (!refreshSuccess) {
+            return false;
+          }
+        }
+
+        // 如果还没有用户信息，获取用户信息
+        if (!state.auth.user && state.auth.isAuthenticated) {
+          try {
+            const response = await fetch(`${API_BASE_URL}/auth/user`, {
+              headers: {
+                'Authorization': `Bearer ${token}`,
+              },
+            });
+
+            if (response.ok) {
+              const { data } = await response.json();
+              set((prevState) => ({
+                auth: {
+                  ...prevState.auth,
+                  user: data.user,
+                  isAuthenticated: true,
+                },
+              }));
+            }
+          } catch (error) {
+            console.error('Failed to fetch user info:', error);
+          }
+        }
+
+        return true;
+      },
+
+      setUser: (user: User | null) =>
+        set((state) => ({
+          auth: {
+            ...state.auth,
+            user,
+            isAuthenticated: !!user,
+          },
+        })),
+
+      setAuthToken: (token: string | null) => {
+        if (token) {
+          localStorage.setItem('authToken', token);
+        } else {
+          localStorage.removeItem('authToken');
+        }
+
+        set((state) => ({
+          auth: {
+            ...state.auth,
+            accessToken: token,
+            isAuthenticated: !!token,
+          },
+        }));
+      },
     }),
     {
       name: 'email-assist-storage',
@@ -308,3 +857,73 @@ export const useNotifications = () => useAppStore((state) => ({
   remove: state.removeNotification,
   clear: state.clearNotifications,
 }));
+
+// 高级仪表板hooks
+export const useDashboardState = () => useAppStore((state) => ({
+  dashboardState: state.dashboardState,
+  setDashboardState: state.setDashboardState,
+  updateDashboardLayout: state.updateDashboardLayout,
+  addWidget: state.addDashboardWidget,
+  removeWidget: state.removeDashboardWidget,
+  updateWidget: state.updateDashboardWidget,
+  setEditMode: state.setDashboardEditMode,
+  setGlobalFilters: state.setGlobalFilters,
+  setRefreshInterval: state.setRefreshInterval,
+}));
+
+export const useDashboardWidgets = () => useAppStore((state) => ({
+  widgets: state.dashboardState.widgets,
+  layouts: state.dashboardState.layouts,
+  selectedWidget: state.dashboardState.selectedWidget,
+  isEditMode: state.dashboardState.isEditMode,
+  addWidget: state.addDashboardWidget,
+  removeWidget: state.removeDashboardWidget,
+  updateWidget: state.updateDashboardWidget,
+  updateLayout: state.updateDashboardLayout,
+}));
+
+export const useDashboardFilters = () => useAppStore((state) => ({
+  globalFilters: state.dashboardState.globalFilters,
+  refreshInterval: state.dashboardState.refreshInterval,
+  setGlobalFilters: state.setGlobalFilters,
+  setRefreshInterval: state.setRefreshInterval,
+}));
+
+// 图表数据hooks
+export const useChartData = () => useAppStore((state) => ({
+  emailVolumeData: state.emailVolumeData,
+  sentimentData: state.sentimentData,
+  categoryData: state.categoryData,
+  priorityHeatmapData: state.priorityHeatmapData,
+  responseTimeData: state.responseTimeData,
+  topSendersData: state.topSendersData,
+  setEmailVolumeData: state.setEmailVolumeData,
+  setSentimentData: state.setSentimentData,
+  setCategoryData: state.setCategoryData,
+  setPriorityHeatmapData: state.setPriorityHeatmapData,
+  setResponseTimeData: state.setResponseTimeData,
+  setTopSendersData: state.setTopSendersData,
+}));
+
+export const useDrillDown = () => useAppStore((state) => ({
+  drillDownConfig: state.drillDownConfig,
+  setDrillDownConfig: state.setDrillDownConfig,
+  updateDrillDownConfig: state.updateDrillDownConfig,
+}));
+
+// 认证相关hooks
+export const useAuth = () => useAppStore((state) => ({
+  auth: state.auth,
+  login: state.login,
+  logout: state.logout,
+  setAuthLoading: state.setAuthLoading,
+  setAuthError: state.setAuthError,
+  updateUser: state.updateUser,
+  clearAuth: state.clearAuth,
+  refreshAuthToken: state.refreshAuthToken,
+  checkAuthStatus: state.checkAuthStatus,
+}));
+
+export const useAuthState = () => useAppStore((state) => state.auth);
+
+export const useUser = () => useAppStore((state) => state.auth.user);

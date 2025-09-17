@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { Email, EmailAnalysis, FilterRule, Report, Workflow, ApiResponse, PaginatedResponse, DashboardStats } from '@/types';
 
-// API基础配置
+// API基础配置 - 连接到真实后端服务器
 const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:3001/api';
 
 // 创建axios实例

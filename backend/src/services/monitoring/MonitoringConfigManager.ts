@@ -214,7 +214,7 @@ export class MonitoringConfigManager extends EventEmitter {
       }
 
       // 从数据库获取
-      const db = DatabaseManager.getInstance();
+      const db = DatabaseManager;
       const result = await db.query(
         'SELECT * FROM monitoring_configs WHERE name = $1',
         [key]
@@ -255,7 +255,7 @@ export class MonitoringConfigManager extends EventEmitter {
     } = {}
   ): Promise<boolean> {
     try {
-      const db = DatabaseManager.getInstance();
+      const db = DatabaseManager;
       const now = new Date();
 
       // 获取现有配置
@@ -340,7 +340,7 @@ export class MonitoringConfigManager extends EventEmitter {
         throw new Error('Cannot delete system configuration');
       }
 
-      const db = DatabaseManager.getInstance();
+      const db = DatabaseManager;
       await db.query('DELETE FROM monitoring_configs WHERE name = $1', [key]);
 
       // 清除缓存
@@ -373,7 +373,7 @@ export class MonitoringConfigManager extends EventEmitter {
    */
   async setThreshold(thresholdConfig: Omit<ThresholdConfig, 'id' | 'createdAt' | 'updatedAt'>): Promise<string> {
     try {
-      const db = DatabaseManager.getInstance();
+      const db = DatabaseManager;
       const now = new Date();
       const id = this.generateId();
 
@@ -441,7 +441,7 @@ export class MonitoringConfigManager extends EventEmitter {
     notificationConfig: Omit<NotificationConfig, 'id' | 'createdAt' | 'updatedAt'>
   ): Promise<string> {
     try {
-      const db = DatabaseManager.getInstance();
+      const db = DatabaseManager;
       const now = new Date();
       const id = this.generateId();
 
@@ -517,7 +517,7 @@ export class MonitoringConfigManager extends EventEmitter {
    */
   async createRule(ruleData: Omit<MonitoringRule, 'id' | 'createdAt' | 'updatedAt'>): Promise<string> {
     try {
-      const db = DatabaseManager.getInstance();
+      const db = DatabaseManager;
       const now = new Date();
       const id = this.generateId();
 
@@ -574,7 +574,7 @@ export class MonitoringConfigManager extends EventEmitter {
     templateData: Omit<MonitoringTemplate, 'id' | 'createdAt' | 'updatedAt'>
   ): Promise<string> {
     try {
-      const db = DatabaseManager.getInstance();
+      const db = DatabaseManager;
       const now = new Date();
       const id = this.generateId();
 
@@ -622,7 +622,7 @@ export class MonitoringConfigManager extends EventEmitter {
    */
   async setRetentionConfig(retentionConfig: DataRetentionConfig): Promise<boolean> {
     try {
-      const db = DatabaseManager.getInstance();
+      const db = DatabaseManager;
 
       await db.query(
         `INSERT INTO monitoring_retention_configs (category, retention, compression, aggregation)
@@ -673,7 +673,7 @@ export class MonitoringConfigManager extends EventEmitter {
    */
   private async loadConfigs(): Promise<void> {
     try {
-      const db = DatabaseManager.getInstance();
+      const db = DatabaseManager;
       const result = await db.query('SELECT * FROM monitoring_configs');
 
       result.rows.forEach(row => {
@@ -697,7 +697,7 @@ export class MonitoringConfigManager extends EventEmitter {
    */
   private async loadThresholds(): Promise<void> {
     try {
-      const db = DatabaseManager.getInstance();
+      const db = DatabaseManager;
       const result = await db.query('SELECT * FROM monitoring_thresholds');
 
       result.rows.forEach(row => {
@@ -717,7 +717,7 @@ export class MonitoringConfigManager extends EventEmitter {
    */
   private async loadNotifications(): Promise<void> {
     try {
-      const db = DatabaseManager.getInstance();
+      const db = DatabaseManager;
       const result = await db.query('SELECT * FROM monitoring_notifications');
 
       result.rows.forEach(row => {
@@ -743,7 +743,7 @@ export class MonitoringConfigManager extends EventEmitter {
    */
   private async loadRules(): Promise<void> {
     try {
-      const db = DatabaseManager.getInstance();
+      const db = DatabaseManager;
       const result = await db.query('SELECT * FROM monitoring_rules');
 
       result.rows.forEach(row => {
@@ -770,7 +770,7 @@ export class MonitoringConfigManager extends EventEmitter {
    */
   private async loadTemplates(): Promise<void> {
     try {
-      const db = DatabaseManager.getInstance();
+      const db = DatabaseManager;
       const result = await db.query('SELECT * FROM monitoring_templates');
 
       result.rows.forEach(row => {
@@ -795,7 +795,7 @@ export class MonitoringConfigManager extends EventEmitter {
    */
   private async loadRetentionConfigs(): Promise<void> {
     try {
-      const db = DatabaseManager.getInstance();
+      const db = DatabaseManager;
       const result = await db.query('SELECT * FROM monitoring_retention_configs');
 
       result.rows.forEach(row => {
