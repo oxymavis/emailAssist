@@ -1,6 +1,8 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import App from './App';
+import App from './App_ai_enhanced';
+
+console.log('🚀 Loading AI Enhanced Email Assist App...');
 
 // 确保根元素存在
 const rootElement = document.getElementById('root');
@@ -12,22 +14,6 @@ if (!rootElement) {
 const root = ReactDOM.createRoot(rootElement);
 
 // 渲染应用
-root.render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
-);
+root.render(<App />);
 
-// 添加全局错误处理
-window.addEventListener('error', (event) => {
-  console.error('Global error:', event.error);
-});
-
-window.addEventListener('unhandledrejection', (event) => {
-  console.error('Unhandled promise rejection:', event.reason);
-});
-
-// 开发环境的热更新支持
-if ((import.meta as any).hot) {
-  (import.meta as any).hot.accept();
-}
+console.log('✅ AI Enhanced Email Assist App loaded successfully');
